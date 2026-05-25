@@ -1,31 +1,46 @@
+import os
 import time
-from datetime import date, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Optional
 
 import requests
-import yfinance as yf
 
 _cache: dict[str, dict] = {}
 CACHE_TTL = 300  # seconds
 
 
 class _TimeoutSession(requests.Session):
-    def __init__(self):
-        super().__init__()
-        self.headers.update({
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/120.0.0.0 Safari/537.36'
-            )
-        })
-
     def request(self, *args, **kwargs):
         kwargs.setdefault('timeout', 8)
         return super().request(*args, **kwargs)
 
 
-_yf_session = _TimeoutSession()
+_session = _TimeoutSession()
+_FINNHUB_BASE = 'https://finnhub.io/api/v1'
+
+
+def _api_key() -> str:
+    return os.environ.get('FINNHUB_API_KEY', '')
+
+
+def _quote(symbol: str) -> dict:
+    """Fetch a single quote from Finnhub. Returns enriched dict or raises."""
+    key = _api_key()
+    if not key:
+        raise RuntimeError('FINNHUB_API_KEY not set')
+    r = _session.get(f'{_FINNHUB_BASE}/quote', params={'symbol': symbol, 'token': key})
+    r.raise_for_status()
+    data = r.json()
+    price = float(data.get('c') or 0)
+    prev = float(data.get('pc') or 0)
+    if price == 0:
+        raise ValueError('no price data returned')
+    change_pct = ((price - prev) / prev * 100) if prev else 0.0
+    return {
+        'symbol': symbol, 'price': price, 'prev_close': prev,
+        'change_pct': round(change_pct, 4), 'ts': time.time(), 'error': False,
+    }
 
 
 def get_price(symbol: str) -> dict:
@@ -33,19 +48,8 @@ def get_price(symbol: str) -> dict:
     cached = _cache.get(symbol)
     if cached and (time.time() - cached['ts']) < CACHE_TTL:
         return cached
-
     try:
-        hist = yf.Ticker(symbol, session=_yf_session).history(period='5d', auto_adjust=True)
-        prices = hist['Close'].dropna()
-        if prices.empty:
-            raise ValueError('no price data returned')
-        price = float(prices.iloc[-1])
-        prev = float(prices.iloc[-2]) if len(prices) > 1 else price
-        change_pct = ((price - prev) / prev * 100) if prev else 0.0
-        result = {
-            'symbol': symbol, 'price': price, 'prev_close': prev,
-            'change_pct': change_pct, 'ts': time.time(), 'error': False,
-        }
+        result = _quote(symbol)
     except Exception as exc:
         if cached:
             return cached
@@ -64,65 +68,76 @@ def get_prices_bulk(symbols: list[str]) -> dict[str, dict]:
     fresh = {s: _cache[s] for s in symbols if s in _cache and (now - _cache[s]['ts']) < CACHE_TTL}
     stale = [s for s in symbols if s not in fresh]
 
-    for sym in stale:
-        try:
-            hist = yf.Ticker(sym, session=_yf_session).history(period='5d', auto_adjust=True)
-            prices = hist['Close'].dropna()
-            if prices.empty:
-                raise ValueError('no price data')
-            price = float(prices.iloc[-1])
-            prev = float(prices.iloc[-2]) if len(prices) > 1 else price
-            change_pct = ((price - prev) / prev * 100) if prev else 0.0
-            result = {
-                'symbol': sym, 'price': price, 'prev_close': prev,
-                'change_pct': change_pct, 'ts': now, 'error': False,
-            }
-        except Exception as exc:
-            result = {
-                'symbol': sym, 'price': 0.0, 'prev_close': 0.0,
-                'change_pct': 0.0, 'ts': now, 'error': True,
-                'error_msg': str(exc)[:200],
-            }
-        _cache[sym] = result
-        fresh[sym] = result
+    if stale:
+        with ThreadPoolExecutor(max_workers=min(len(stale), 5)) as pool:
+            futures = {pool.submit(get_price, sym): sym for sym in stale}
+            for fut in as_completed(futures):
+                sym = futures[fut]
+                try:
+                    fresh[sym] = fut.result()
+                except Exception as exc:
+                    fresh[sym] = {
+                        'symbol': sym, 'price': 0.0, 'prev_close': 0.0,
+                        'change_pct': 0.0, 'ts': now, 'error': True,
+                        'error_msg': str(exc)[:200],
+                    }
 
     return fresh
 
 
 def get_price_history(symbol: str, period: str = '1y') -> list[dict]:
     """Returns OHLCV list suitable for TradingView Lightweight Charts."""
+    key = _api_key()
+    if not key:
+        return []
+    period_days = {'1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730}
+    days = period_days.get(period, 365)
+    now_ts = int(time.time())
+    from_ts = now_ts - days * 86400
     try:
-        hist = yf.Ticker(symbol.upper(), session=_yf_session).history(period=period, auto_adjust=True)
-        result = []
-        for ts, row in hist.iterrows():
-            result.append({
-                'time': ts.strftime('%Y-%m-%d'),
-                'open': round(float(row['Open']), 4),
-                'high': round(float(row['High']), 4),
-                'low': round(float(row['Low']), 4),
-                'close': round(float(row['Close']), 4),
-            })
-        return result
+        r = _session.get(
+            f'{_FINNHUB_BASE}/stock/candle',
+            params={'symbol': symbol.upper(), 'resolution': 'D',
+                    'from': from_ts, 'to': now_ts, 'token': key},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if data.get('s') != 'ok' or not data.get('t'):
+            return []
+        return [
+            {
+                'time': datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d'),
+                'open': round(float(o), 4),
+                'high': round(float(h), 4),
+                'low': round(float(l), 4),
+                'close': round(float(c), 4),
+            }
+            for ts, o, h, l, c in zip(data['t'], data['o'], data['h'], data['l'], data['c'])
+        ]
     except Exception:
         return []
 
 
 def get_benchmark_returns(portfolio_start: Optional[str]) -> dict:
-    """Returns % return for SPY and QQQ since portfolio_start date (YYYY-MM-DD)."""
-    if not portfolio_start:
+    """Returns % return for SPY and QQQ since portfolio_start (YYYY-MM-DD)."""
+    key = _api_key()
+    if not key or not portfolio_start:
         return {}
     try:
-        start = portfolio_start[:10]
-        end = (date.today() + timedelta(days=1)).isoformat()
+        start_ts = int(datetime.strptime(portfolio_start[:10], '%Y-%m-%d').timestamp())
+        end_ts = int(time.time())
         result = {}
         for sym in ('SPY', 'QQQ'):
-            hist = yf.Ticker(sym, session=_yf_session).history(
-                start=start, end=end, auto_adjust=True
+            r = _session.get(
+                f'{_FINNHUB_BASE}/stock/candle',
+                params={'symbol': sym, 'resolution': 'D',
+                        'from': start_ts, 'to': end_ts, 'token': key},
             )
-            prices = hist['Close'].dropna()
-            if len(prices) >= 2:
-                first = float(prices.iloc[0])
-                last = float(prices.iloc[-1])
+            r.raise_for_status()
+            data = r.json()
+            closes = data.get('c', [])
+            if len(closes) >= 2:
+                first, last = float(closes[0]), float(closes[-1])
                 result[sym] = round((last - first) / first * 100, 2) if first else 0.0
         return result
     except Exception:

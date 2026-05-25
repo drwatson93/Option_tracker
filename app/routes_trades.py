@@ -143,13 +143,22 @@ def _enrich_trades_with_prices(trades: list) -> list:
 def _enrich_positions_with_prices(positions: list, all_trades: list) -> list:
     symbols = list({p['symbol'] for p in positions if p.get('symbol')})
     prices = md.get_prices_bulk(symbols) if symbols else {}
+
+    # Total open shares per symbol — used to proportionally attribute premiums
+    total_open_shares: dict[str, int] = {}
+    for p in positions:
+        if p.get('status') == 'open':
+            sym = p['symbol'].upper()
+            total_open_shares[sym] = total_open_shares.get(sym, 0) + int(p.get('shares') or 0)
+
     enriched = []
     for p in positions:
         sym = p['symbol'].upper()
         price_data = prices.get(sym, {})
         price = price_data.get('price') or None
         related = [t for t in all_trades if t.get('symbol', '').upper() == sym]
-        e = enrich_position(p, price, related)
+        total_shares = total_open_shares.get(sym, int(p.get('shares') or 0))
+        e = enrich_position(p, price, related, total_shares)
         enriched.append(e)
     return enriched
 

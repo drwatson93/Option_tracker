@@ -120,7 +120,7 @@ def enrich_trade(trade: dict, current_price: Optional[float]) -> dict:
 
 
 def enrich_position(position: dict, current_price: Optional[float],
-                    related_trades: list) -> dict:
+                    related_trades: list, total_symbol_shares: int = 0) -> dict:
     p = dict(position)
     shares = int(p.get('shares') or 0)
     purchase_price = float(p.get('purchase_price') or 0)
@@ -135,8 +135,10 @@ def enrich_position(position: dict, current_price: Optional[float],
     else:
         p['open_pl'] = None
 
-    # Net premiums collected from closed trades on this symbol
-    net_prems = sum(
+    # Net premiums: total for the symbol divided proportionally by lot size.
+    # Use total_symbol_shares so a 10-share lot doesn't absorb all premiums.
+    total_shares = total_symbol_shares or shares
+    net_prems_symbol = sum(
         net_premium_total(
             float(t.get('open_premium') or 0),
             float(t['close_premium']) if t.get('close_premium') is not None else None,
@@ -145,11 +147,12 @@ def enrich_position(position: dict, current_price: Optional[float],
         )
         for t in related_trades
     )
-    p['net_premiums'] = net_prems
-    p['net_premiums_per_share'] = net_prems / shares if shares else 0
+    net_prems_per_share = net_prems_symbol / total_shares if total_shares else 0
+    p['net_premiums'] = net_prems_per_share * shares
+    p['net_premiums_per_share'] = net_prems_per_share
 
     # Break-even
-    p['break_even'] = break_even(purchase_price, p['net_premiums_per_share'])
+    p['break_even'] = break_even(purchase_price, net_prems_per_share)
 
     # Net open P/L = open P/L + net premiums
     p['net_open_pl'] = (p['open_pl'] + net_prems) if p['open_pl'] is not None else None

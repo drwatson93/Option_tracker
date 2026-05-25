@@ -40,25 +40,34 @@
         <div class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           <template x-for="t in exp.data.trades" :key="t.id">
             <div class="rounded-lg border p-3"
-                 :class="t.option_type === 'CC' || t.option_type === 'Call' ? 'border-purple-200 bg-purple-50' : 'border-orange-200 bg-orange-50'">
+                 :class="t.status === 'open'
+                   ? (t.option_type === 'CC' || t.option_type === 'Call' ? 'border-purple-200 bg-purple-50' : 'border-orange-200 bg-orange-50')
+                   : 'border-gray-200 bg-gray-50 opacity-70'">
               <div class="flex items-center justify-between mb-1">
                 <span class="font-bold text-sm" x-text="t.symbol"></span>
-                <span class="text-xs font-medium px-1.5 py-0.5 rounded"
-                      :class="t.option_type === 'CC' || t.option_type === 'Call' ? 'bg-purple-200 text-purple-700' : 'bg-orange-200 text-orange-700'"
-                      x-text="t.option_type"></span>
+                <div class="flex items-center gap-1">
+                  <span class="text-xs font-medium px-1.5 py-0.5 rounded"
+                        :class="t.option_type === 'CC' || t.option_type === 'Call' ? 'bg-purple-200 text-purple-700' : 'bg-orange-200 text-orange-700'"
+                        x-text="t.option_type"></span>
+                  <span x-show="t.status !== 'open'"
+                        class="text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-600"
+                        x-text="t.status"></span>
+                </div>
               </div>
               <div class="text-xs text-gray-600 space-y-0.5">
                 <div class="flex justify-between">
                   <span>Strike</span>
                   <span class="font-medium" x-text="t.strike ? `$${parseFloat(t.strike).toFixed(2)}` : '—'"></span>
                 </div>
-                <div class="flex justify-between">
+                <div class="flex justify-between" x-show="t.status === 'open'">
                   <span>Curr</span>
                   <span class="font-medium" x-text="t.current_price ? `$${parseFloat(t.current_price).toFixed(2)}` : '—'"></span>
                 </div>
                 <div class="flex justify-between">
-                  <span>Premium</span>
-                  <span class="font-medium text-green-700" x-text="t.net_premium_total ? `+$${parseFloat(t.net_premium_total).toFixed(2)}` : '—'"></span>
+                  <span>Net Prem</span>
+                  <span class="font-medium"
+                        :class="(t.net_premium_total || 0) >= 0 ? 'text-green-700' : 'text-red-600'"
+                        x-text="t.net_premium_total != null ? `${t.net_premium_total >= 0 ? '+' : ''}$${parseFloat(t.net_premium_total).toFixed(2)}` : '—'"></span>
                 </div>
                 <div class="flex justify-between" x-show="t.quantity > 1">
                   <span>Qty</span>

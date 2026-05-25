@@ -28,24 +28,46 @@ def dashboard():
     open_pos_res = db.table('positions').select('*').eq('status', 'open').execute()
     open_positions_raw = open_pos_res.data or []
 
-    # Fetch prices for all unique symbols
     symbols = list({t['symbol'] for t in all_trades if t.get('symbol')} |
                    {p['symbol'] for p in open_positions_raw if p.get('symbol')})
     prices = md.get_prices_bulk(symbols) if symbols else {}
 
     def _price(sym):
-        return prices.get(sym.upper(), {}).get('price')
+        return prices.get(sym.upper(), {}).get('price') or None
+
+    # Total open shares per symbol for proportional premium attribution
+    total_open_shares: dict = {}
+    for p in open_positions_raw:
+        sym = p['symbol'].upper()
+        total_open_shares[sym] = total_open_shares.get(sym, 0) + int(p.get('shares') or 0)
 
     open_trades = [enrich_trade(t, _price(t['symbol'])) for t in open_trades_raw]
     open_positions = [
-        enrich_position(p, _price(p['symbol']),
-                        [t for t in all_trades if t.get('symbol','').upper() == p['symbol'].upper()])
+        enrich_position(
+            p, _price(p['symbol']),
+            [t for t in all_trades if t.get('symbol', '').upper() == p['symbol'].upper()],
+            total_open_shares.get(p['symbol'].upper(), int(p.get('shares') or 0)),
+        )
         for p in open_positions_raw
     ]
 
     stats = portfolio_stats(open_trades, open_positions)
 
-    # Upcoming expirations (next 14 days)
+    # Closed trade stats
+    closed_trades_raw = [t for t in all_trades if t.get('status') != 'open']
+    closed_enriched = [enrich_trade(t, _price(t['symbol'])) for t in closed_trades_raw]
+    closed_net_premium = sum(t.get('net_premium_total') or 0 for t in closed_enriched)
+
+    # Avg annualized yield: open trades if any, otherwise all closed trades
+    if open_trades:
+        display_ann_yield = stats['avg_annualized_yield']
+        yield_label = 'avg open ann. yield'
+    else:
+        closed_yields = [t['annualized_yield'] for t in closed_enriched if t.get('annualized_yield')]
+        display_ann_yield = sum(closed_yields) / len(closed_yields) if closed_yields else 0
+        yield_label = 'avg closed ann. yield'
+
+    # Upcoming expirations (next 14 days, open only)
     today = date.today()
     cutoff = today + timedelta(days=14)
     upcoming = [
@@ -60,8 +82,7 @@ def dashboard():
     ytd_start = date(today.year, 1, 1).isoformat()
     closed_ytd = [
         t for t in all_trades
-        if t.get('status') != 'open' and
-        t.get('close_date') and t['close_date'] >= ytd_start
+        if t.get('status') != 'open' and t.get('close_date') and t['close_date'] >= ytd_start
     ]
     ytd_pl = sum(
         net_premium_total(
@@ -78,6 +99,9 @@ def dashboard():
         stats=stats,
         upcoming_expirations=upcoming,
         ytd_pl=ytd_pl,
+        closed_net_premium=closed_net_premium,
+        display_ann_yield=display_ann_yield,
+        yield_label=yield_label,
         today=today.isoformat(),
     )
 
@@ -90,51 +114,42 @@ def dashboard():
 @login_required
 def calendar():
     db = get_db()
-    # Fetch open trades and near-term closed ones
-    open_res = db.table('trades').select('*').eq('status', 'open').execute()
-    open_trades = open_res.data or []
+    all_res = db.table('trades').select('*').execute()
+    all_trades = all_res.data or []
 
-    # Group by expiration date
+    # Group all trades by expiration_date
     by_date = defaultdict(list)
-    for t in open_trades:
+    for t in all_trades:
         exp = t.get('expiration_date')
         if exp:
             by_date[str(exp)[:10]].append(t)
 
-    # Build calendar data: for each expiration date, compute aggregates
-    calendar_data = {}
-    symbols = list({t['symbol'] for t in open_trades if t.get('symbol')})
+    symbols = list({t['symbol'] for t in all_trades if t.get('symbol')})
     prices = md.get_prices_bulk(symbols) if symbols else {}
 
+    calendar_data = {}
     for exp_date, trades in sorted(by_date.items()):
         enriched = [
             enrich_trade(t, prices.get(t['symbol'].upper(), {}).get('price'))
             for t in trades
         ]
+        net_prems = sum(e.get('net_premium_total') or 0 for e in enriched)
+        open_trades_here = [t for t in trades if t.get('status') == 'open']
         capital_at_risk = sum(
             float(t.get('strike') or 0) * 100 * abs(int(t.get('quantity') or 1))
-            for t in trades
+            for t in open_trades_here
             if t.get('option_type') in ('CC', 'CSP', 'Call', 'Put')
         )
-        net_prems = sum(e.get('net_premium_total') or 0 for e in enriched)
-        cc_trades = [e for e in enriched if e.get('option_type') in ('CC', 'Call')]
-        put_trades = [e for e in enriched if e.get('option_type') in ('CSP', 'Put')]
 
         calendar_data[exp_date] = {
             'trades': enriched,
-            'cc_trades': cc_trades,
-            'put_trades': put_trades,
             'capital_at_risk': capital_at_risk,
             'net_premiums': net_prems,
             'trade_count': len(trades),
-            'cc_capital': sum(float(t.get('strike') or 0) * 100 * abs(int(t.get('quantity') or 1))
-                              for t in trades if t.get('option_type') in ('CC', 'Call')),
-            'put_capital': sum(float(t.get('strike') or 0) * 100 * abs(int(t.get('quantity') or 1))
-                               for t in trades if t.get('option_type') in ('CSP', 'Put')),
+            'open_count': len(open_trades_here),
         }
 
     today = date.today()
-    # Default to current month/year
     month = int(request.args.get('month', today.month))
     year = int(request.args.get('year', today.year))
 
@@ -205,8 +220,14 @@ def ticker_detail(symbol: str):
     enriched_trades = [enrich_trade(t, current_price) for t in trades_raw]
     open_trades = [t for t in enriched_trades if t.get('status') == 'open']
     closed_trades = [t for t in enriched_trades if t.get('status') != 'open']
+
+    total_open_shares = 0
+    for p in positions_raw:
+        if p.get('status') == 'open':
+            total_open_shares += int(p.get('shares') or 0)
+
     enriched_positions = [
-        enrich_position(p, current_price, trades_raw)
+        enrich_position(p, current_price, trades_raw, total_open_shares)
         for p in positions_raw
     ]
 

@@ -124,38 +124,41 @@ def enrich_position(position: dict, current_price: Optional[float],
     p = dict(position)
     shares = int(p.get('shares') or 0)
     purchase_price = float(p.get('purchase_price') or 0)
+    close_price_raw = p.get('close_price')
+    close_price = float(close_price_raw) if close_price_raw is not None else None
+    is_closed = p.get('status') == 'closed'
     p['current_price'] = current_price
 
-    # Market value
-    p['market_value'] = (current_price * shares) if current_price else None
+    # Realized P/L — closed positions only
+    p['realized_pl'] = (close_price - purchase_price) * shares if (is_closed and close_price) else None
 
-    # Open P/L
-    if current_price:
-        p['open_pl'] = (current_price - purchase_price) * shares
-    else:
-        p['open_pl'] = None
+    # Market value / open P/L — open positions only
+    p['market_value'] = (current_price * shares) if (not is_closed and current_price) else None
+    p['open_pl'] = (current_price - purchase_price) * shares if (not is_closed and current_price) else None
 
-    # Net premiums: total for the symbol divided proportionally by lot size.
-    # Use total_symbol_shares so a 10-share lot doesn't absorb all premiums.
-    total_shares = total_symbol_shares or shares
-    net_prems_symbol = sum(
-        net_premium_total(
-            float(t.get('open_premium') or 0),
-            float(t['close_premium']) if t.get('close_premium') is not None else None,
-            int(t.get('quantity') or 1),
-            float(t.get('fees') or 0),
+    # Net premiums — open positions only, proportional to lot size.
+    # total_symbol_shares prevents a small lot from absorbing all premiums.
+    if not is_closed:
+        total_shares = total_symbol_shares or shares
+        net_prems_symbol = sum(
+            net_premium_total(
+                float(t.get('open_premium') or 0),
+                float(t['close_premium']) if t.get('close_premium') is not None else None,
+                int(t.get('quantity') or 1),
+                float(t.get('fees') or 0),
+            )
+            for t in related_trades
         )
-        for t in related_trades
-    )
-    net_prems_per_share = net_prems_symbol / total_shares if total_shares else 0
-    p['net_premiums'] = net_prems_per_share * shares
-    p['net_premiums_per_share'] = net_prems_per_share
-
-    # Break-even
-    p['break_even'] = break_even(purchase_price, net_prems_per_share)
-
-    # Net open P/L = open P/L + net premiums
-    p['net_open_pl'] = (p['open_pl'] + net_prems) if p['open_pl'] is not None else None
+        net_prems_per_share = net_prems_symbol / total_shares if total_shares else 0
+        p['net_premiums'] = net_prems_per_share * shares
+        p['net_premiums_per_share'] = net_prems_per_share
+        p['break_even'] = break_even(purchase_price, net_prems_per_share)
+        p['net_open_pl'] = (p['open_pl'] + p['net_premiums']) if p['open_pl'] is not None else None
+    else:
+        p['net_premiums'] = None
+        p['net_premiums_per_share'] = None
+        p['break_even'] = None
+        p['net_open_pl'] = None
 
     # Coverage: does an open CC exist for this symbol?
     p['covered'] = any(
@@ -164,10 +167,10 @@ def enrich_position(position: dict, current_price: Optional[float],
     )
 
     # Last closed trade info
-    closed = [t for t in related_trades if t.get('status') in ('closed', 'expired', 'assigned')]
-    if closed:
-        closed.sort(key=lambda t: t.get('close_date') or '', reverse=True)
-        last = closed[0]
+    closed_trades = [t for t in related_trades if t.get('status') in ('closed', 'expired', 'assigned')]
+    if closed_trades:
+        closed_trades.sort(key=lambda t: t.get('close_date') or '', reverse=True)
+        last = closed_trades[0]
         p['last_closed_trade_date'] = last.get('close_date')
         p['last_closed_trade_type'] = last.get('option_type')
     else:

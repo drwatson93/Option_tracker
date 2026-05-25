@@ -34,6 +34,67 @@ def _delete_import(import_id: str) -> None:
         os.remove(path)
     except FileNotFoundError:
         pass
+
+
+def _dedup_trades(candidates: list, db) -> tuple[list, int]:
+    """Filter out candidates that already exist in the trades table.
+    Uniqueness key: (symbol, option_type, strike, expiration_date, open_date).
+    """
+    if not candidates:
+        return [], 0
+    symbols = list({r['symbol'] for r in candidates})
+    res = db.table('trades').select(
+        'symbol,option_type,strike,expiration_date,open_date'
+    ).in_('symbol', symbols).execute()
+
+    def _tkey(r):
+        return (
+            str(r['symbol']),
+            str(r['option_type']),
+            round(float(r['strike'] or 0), 2),
+            str(r['expiration_date'] or ''),
+            str(r['open_date'] or ''),
+        )
+
+    existing = {_tkey(r) for r in (res.data or [])}
+    unique, skipped = [], 0
+    for row in candidates:
+        if _tkey(row) in existing:
+            skipped += 1
+        else:
+            unique.append(row)
+    return unique, skipped
+
+
+def _dedup_positions(candidates: list, db) -> tuple[list, int]:
+    """Filter out candidates that already exist in the positions table.
+    Uniqueness key: (symbol, shares, purchase_price, open_date).
+    """
+    if not candidates:
+        return [], 0
+    symbols = list({r['symbol'] for r in candidates})
+    res = db.table('positions').select(
+        'symbol,shares,purchase_price,open_date'
+    ).in_('symbol', symbols).execute()
+
+    def _pkey(r):
+        return (
+            str(r['symbol']),
+            int(r['shares'] or 0),
+            round(float(r['purchase_price'] or 0), 2),
+            str(r['open_date'] or ''),
+        )
+
+    existing = {_pkey(r) for r in (res.data or [])}
+    unique, skipped = [], 0
+    for row in candidates:
+        if _pkey(row) in existing:
+            skipped += 1
+        else:
+            unique.append(row)
+    return unique, skipped
+
+
 from app.auth import login_required
 from app.db import get_db
 from app.services import market_data as md
@@ -433,16 +494,21 @@ def import_csv_confirm():
         return redirect(url_for('trades.import_csv'))
 
     db = get_db()
-    batch_size = 50
+    trades_to_insert, trades_skipped = _dedup_trades(trades_to_insert, db)
+    positions_to_insert, pos_skipped = _dedup_positions(positions_to_insert, db)
 
+    batch_size = 50
     for i in range(0, len(trades_to_insert), batch_size):
         db.table('trades').insert(trades_to_insert[i:i + batch_size]).execute()
 
     for i in range(0, len(positions_to_insert), batch_size):
         db.table('positions').insert(positions_to_insert[i:i + batch_size]).execute()
 
-    total = len(trades_to_insert) + len(positions_to_insert)
-    flash(f'Imported {len(trades_to_insert)} trade(s) and {len(positions_to_insert)} position(s).', 'success')
+    msg = f'Imported {len(trades_to_insert)} trade(s) and {len(positions_to_insert)} position(s).'
+    skipped_total = trades_skipped + pos_skipped
+    if skipped_total:
+        msg += f' Skipped {skipped_total} duplicate(s) already in the database.'
+    flash(msg, 'success')
     return redirect(url_for('trades.index'))
 
 

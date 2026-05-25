@@ -187,46 +187,60 @@ def _process_option_groups(option_rows: list) -> list:
 def _process_stocks(stock_rows: list) -> list:
     """
     FIFO matching of Buy lots against Sell transactions.
-    Returns only open position records (shares still held).
+    Returns both open lots (still held) and closed lots (sold), so
+    assignment-triggered sells appear in the Positions closed tab.
     """
     sorted_rows = sorted(stock_rows, key=lambda r: r['activity_date'] or '0000-01-01')
 
     inventory: dict = defaultdict(list)  # symbol -> [{qty, price, date}]
+    closed: list = []
 
     for row in sorted_rows:
         sym = row['symbol']
         qty = _parse_int(row['quantity'])
-        price = row['price'] or 0.0
-        date = row['activity_date']
+        sell_price = row['price'] or 0.0
+        sell_date = row['activity_date']
         tc = row['trans_code'].upper()
 
         if tc == 'BUY':
-            inventory[sym].append({'qty': qty, 'price': price, 'date': date})
+            inventory[sym].append({'qty': qty, 'price': sell_price, 'date': sell_date})
         elif tc == 'SELL':
             remaining = qty
             while remaining > 0 and inventory[sym]:
                 lot = inventory[sym][0]
-                if lot['qty'] <= remaining:
-                    remaining -= lot['qty']
+                filled = min(lot['qty'], remaining)
+                closed.append({
+                    'symbol': sym,
+                    'shares': filled,
+                    'purchase_price': lot['price'],
+                    'close_price': sell_price,
+                    'open_date': lot['date'],
+                    'close_date': sell_date,
+                    'status': 'closed',
+                    'notes': None,
+                })
+                remaining -= filled
+                if filled >= lot['qty']:
                     inventory[sym].pop(0)
                 else:
-                    lot['qty'] -= remaining
-                    remaining = 0
+                    lot['qty'] -= filled
 
-    positions = []
+    open_positions = []
     for sym, lots in inventory.items():
         for lot in lots:
             if lot['qty'] > 0:
-                positions.append({
+                open_positions.append({
                     'symbol': sym,
                     'shares': lot['qty'],
                     'purchase_price': lot['price'],
+                    'close_price': None,
                     'open_date': lot['date'],
                     'close_date': None,
                     'status': 'open',
                     'notes': None,
                 })
-    return positions
+
+    return open_positions + closed
 
 
 # ──────────────────────────────────────────────

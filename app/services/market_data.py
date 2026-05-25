@@ -43,32 +43,25 @@ def get_prices_bulk(symbols: list[str]) -> dict[str, dict]:
     fresh = {s: _cache[s] for s in symbols if s in _cache and (now - _cache[s]['ts']) < CACHE_TTL}
     stale = [s for s in symbols if s not in fresh]
 
-    if stale:
+    for sym in stale:
         try:
-            data = yf.download(stale, period='2d', progress=False, auto_adjust=True)
-            closes = data['Close'] if len(stale) > 1 else data[['Close']]
-            for sym in stale:
-                try:
-                    col = sym if len(stale) > 1 else 'Close'
-                    prices = closes[col].dropna()
-                    price = float(prices.iloc[-1])
-                    prev = float(prices.iloc[-2]) if len(prices) > 1 else price
-                    change_pct = ((price - prev) / prev * 100) if prev else 0.0
-                    result = {
-                        'symbol': sym, 'price': price, 'prev_close': prev,
-                        'change_pct': change_pct, 'ts': now, 'error': False,
-                    }
-                except Exception:
-                    result = {'symbol': sym, 'price': 0.0, 'prev_close': 0.0,
-                              'change_pct': 0.0, 'ts': now, 'error': True}
-                _cache[sym] = result
-                fresh[sym] = result
-        except Exception:
-            for sym in stale:
-                result = {'symbol': sym, 'price': 0.0, 'prev_close': 0.0,
-                          'change_pct': 0.0, 'ts': now, 'error': True}
-                _cache[sym] = result
-                fresh[sym] = result
+            hist = yf.Ticker(sym).history(period='5d', auto_adjust=True)
+            prices = hist['Close'].dropna()
+            if prices.empty:
+                raise ValueError('no price data')
+            price = float(prices.iloc[-1])
+            prev = float(prices.iloc[-2]) if len(prices) > 1 else price
+            change_pct = ((price - prev) / prev * 100) if prev else 0.0
+            result = {
+                'symbol': sym, 'price': price, 'prev_close': prev,
+                'change_pct': change_pct, 'ts': now, 'error': False,
+            }
+        except Exception as exc:
+            result = {'symbol': sym, 'price': 0.0, 'prev_close': 0.0,
+                      'change_pct': 0.0, 'ts': now, 'error': True,
+                      'error_msg': str(exc)}
+        _cache[sym] = result
+        fresh[sym] = result
 
     return fresh
 

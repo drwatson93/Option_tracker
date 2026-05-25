@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}Trades — Options Wheel Tracker{% endblock %}
+
+{% block content %}
+<div x-data="{ tab: 'open' }" class="space-y-6">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <h1 class="text-2xl font-bold text-gray-900">Trades</h1>
+    <div class="flex gap-2">
+      <a href="{{ url_for('trades.import_csv') }}"
+         class="text-sm text-gray-600 hover:text-gray-900 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
+        Import CSV
+      </a>
+      <a href="{{ url_for('trades.import_ai') }}"
+         class="text-sm text-gray-600 hover:text-gray-900 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
+        ✨ AI Import
+      </a>
+      <a href="{{ url_for('trades.new_trade') }}"
+         class="text-sm bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg transition-colors">
+        + Add Trade
+      </a>
+    </div>
+  </div>
+
+  <!-- Stats cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wide font-medium">Open Trades</p>
+      <p class="text-3xl font-bold text-gray-900 mt-1">{{ stats.open_trades_count }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wide font-medium">% ITM</p>
+      <p class="text-3xl font-bold mt-1 {% if stats.itm_pct > 30 %}text-red-600{% else %}text-green-600{% endif %}">
+        {{ '%.1f'|format(stats.itm_pct) }}%
+        <span class="text-base font-normal text-gray-400">[{{ stats.itm_count }}/{{ stats.open_trades_count }}]</span>
+      </p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wide font-medium">Open Net Premium</p>
+      <p class="text-3xl font-bold text-green-600 mt-1">${{ '{:,.0f}'.format(stats.open_trades_net_premium) }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wide font-medium">Portfolio Ann. Yield</p>
+      <p class="text-3xl font-bold text-green-600 mt-1">{{ '%.1f'|format(stats.avg_annualized_yield) }}%</p>
+      <p class="text-xs text-gray-400 mt-0.5">avg {{ '%.0f'|format(stats.avg_dte) }}d to exp</p>
+    </div>
+  </div>
+
+  <!-- Capital cards -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wide font-medium">Open Trades Capital</p>
+      <p class="text-2xl font-bold text-blue-600 mt-1">${{ '{:,.0f}'.format(stats.open_trades_capital) }}</p>
+      <p class="text-xs text-gray-400 mt-1">CCs: ${{ '{:,.0f}'.format(stats.cc_capital) }} | Puts: ${{ '{:,.0f}'.format(stats.put_capital) }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wide font-medium">Total Capital</p>
+      <p class="text-2xl font-bold text-blue-600 mt-1">${{ '{:,.0f}'.format(stats.total_capital) }}</p>
+      <p class="text-xs text-gray-400 mt-1">Trades: ${{ '{:,.0f}'.format(stats.open_trades_capital) }} | Pos: ${{ '{:,.0f}'.format(stats.positions_capital) }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wide font-medium">Uncovered Positions</p>
+      <p class="text-2xl font-bold text-yellow-600 mt-1">${{ '{:,.0f}'.format(stats.uncovered_capital) }}</p>
+      <p class="text-xs text-gray-400 mt-1">Positions without active CCs</p>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="bg-white rounded-xl border border-gray-200">
+    <div class="flex gap-1 p-3 border-b border-gray-100">
+      <button @click="tab='open'"
+              :class="tab==='open' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'"
+              class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">
+        Open ({{ open_trades|length }})
+      </button>
+      <button @click="tab='closed'"
+              :class="tab==='closed' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'"
+              class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">
+        Closed ({{ closed_trades|length }})
+      </button>
+    </div>
+
+    <!-- Open Trades Table -->
+    <div x-show="tab==='open'" class="overflow-x-auto">
+      {% if open_trades %}
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+          <tr>
+            <th class="px-4 py-3 text-left">Symbol</th>
+            <th class="px-4 py-3 text-left">Type</th>
+            <th class="px-4 py-3 text-right">ITM/OTM</th>
+            <th class="px-4 py-3 text-right">Strike</th>
+            <th class="px-4 py-3 text-right">Last Close</th>
+            <th class="px-4 py-3 text-right">Chg%</th>
+            <th class="px-4 py-3 text-right">Expiration</th>
+            <th class="px-4 py-3 text-right">DTE</th>
+            <th class="px-4 py-3 text-right">Qty</th>
+            <th class="px-4 py-3 text-right">Net Premium</th>
+            <th class="px-4 py-3 text-right">Yield</th>
+            <th class="px-4 py-3 text-right">Ann. Yield</th>
+            <th class="px-4 py-3 text-right">Extrinsic</th>
+            <th class="px-4 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for t in open_trades %}
+          <tr class="hover:bg-gray-50 group">
+            <td class="px-4 py-3 font-semibold">
+              <a href="{{ url_for('views.ticker_detail', symbol=t.symbol) }}" class="text-blue-600 hover:underline">{{ t.symbol }}</a>
+            </td>
+            <td class="px-4 py-3">
+              <span class="px-2 py-0.5 rounded text-xs font-medium
+                           {% if t.option_type in ('CC','Call') %}bg-purple-100 text-purple-700
+                           {% elif t.option_type in ('CSP','Put') %}bg-orange-100 text-orange-700
+                           {% else %}bg-gray-100 text-gray-700{% endif %}">
+                {{ t.option_type }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-right">
+              {% if t.itm_otm_pct is not none %}
+              <span class="text-xs font-semibold px-2 py-0.5 rounded
+                           {% if t.itm_otm_pct > 0 %}bg-red-100 text-red-700{% else %}bg-green-100 text-green-700{% endif %}">
+                {{ t.itm_otm_pct | pct(2) }}
+              </span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">${{ '%.2f'|format(t.strike|float) if t.strike else '—' }}</td>
+            <td class="px-4 py-3 text-right">${{ '%.2f'|format(t.current_price|float) if t.current_price else '—' }}</td>
+            <td class="px-4 py-3 text-right text-xs
+                       {% if t.price_change_pct is not none %}
+                         {% if t.price_change_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}
+                       {% endif %}">
+              {% if t.price_change_pct is not none %}
+                {% if t.price_change_pct >= 0 %}▲{% else %}▼{% endif %}
+                {{ '%.2f'|format(t.price_change_pct|abs) }}%
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right text-gray-600">{{ t.expiration_date|fmt_date }}</td>
+            <td class="px-4 py-3 text-right font-medium {% if t.dte <= 7 %}text-red-600{% elif t.dte <= 14 %}text-yellow-600{% else %}text-gray-700{% endif %}">
+              {{ t.dte }}d
+            </td>
+            <td class="px-4 py-3 text-right">{{ t.quantity }}</td>
+            <td class="px-4 py-3 text-right font-medium text-green-600">
+              ${{ '{:,.2f}'.format(t.net_premium_total) }}
+              <div class="text-xs text-gray-400">
+                (${{ '%.0f'|format(t.open_premium * 100) if t.open_premium else 0 }}
+                {% if t.close_premium %}- ${{ '%.0f'|format(t.close_premium * 100) }}{% endif %})
+              </div>
+            </td>
+            <td class="px-4 py-3 text-right text-gray-600">{{ t.yield_pct | pct(2) if t.yield_pct else '—' }}</td>
+            <td class="px-4 py-3 text-right font-medium {% if t.annualized_yield and t.annualized_yield > 0 %}text-green-600{% else %}text-gray-700{% endif %}">
+              {{ t.annualized_yield | pct(1) if t.annualized_yield else '—' }}
+            </td>
+            <td class="px-4 py-3 text-right text-gray-600">
+              {{ ('$' + '{:,.2f}'.format(t.extrinsic_value)) if t.extrinsic_value is not none else 'N/A' }}
+            </td>
+            <td class="px-4 py-3 text-right">
+              <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <!-- Close modal trigger -->
+                <button
+                  @click="$dispatch('open-close-modal', {id: '{{ t.id }}', symbol: '{{ t.symbol }}', strike: '{{ t.strike }}', type: '{{ t.option_type }}'})"
+                  class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                  title="Close trade">
+                  &#10003;
+                </button>
+                <a href="{{ url_for('trades.edit_trade', trade_id=t.id) }}"
+                   class="p-1.5 text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 rounded" title="Edit">
+                  ✎
+                </a>
+                <form method="POST" action="{{ url_for('trades.delete_trade', trade_id=t.id) }}"
+                      onsubmit="return confirm('Delete this trade?')">
+                  <button type="submit" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded" title="Delete">
+                    &#128465;
+                  </button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="py-16 text-center text-gray-400">
+        <p class="text-lg">No open trades.</p>
+        <a href="{{ url_for('trades.new_trade') }}" class="mt-3 inline-block text-blue-600 hover:underline text-sm">+ Add your first trade</a>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Closed Trades Table -->
+    <div x-show="tab==='closed'" class="overflow-x-auto">
+      {% if closed_trades %}
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+          <tr>
+            <th class="px-4 py-3 text-left">Symbol</th>
+            <th class="px-4 py-3 text-left">Type</th>
+            <th class="px-4 py-3 text-right">Strike</th>
+            <th class="px-4 py-3 text-right">Open Date</th>
+            <th class="px-4 py-3 text-right">Close Date</th>
+            <th class="px-4 py-3 text-right">Status</th>
+            <th class="px-4 py-3 text-right">Qty</th>
+            <th class="px-4 py-3 text-right">Net Premium</th>
+            <th class="px-4 py-3 text-right">Yield</th>
+            <th class="px-4 py-3 text-right">Ann. Yield</th>
+            <th class="px-4 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for t in closed_trades %}
+          <tr class="hover:bg-gray-50 group">
+            <td class="px-4 py-3 font-semibold">
+              <a href="{{ url_for('views.ticker_detail', symbol=t.symbol) }}" class="text-blue-600 hover:underline">{{ t.symbol }}</a>
+            </td>
+            <td class="px-4 py-3">
+              <span class="px-2 py-0.5 rounded text-xs font-medium
+                           {% if t.option_type in ('CC','Call') %}bg-purple-100 text-purple-700
+                           {% elif t.option_type in ('CSP','Put') %}bg-orange-100 text-orange-700
+                           {% else %}bg-gray-100 text-gray-700{% endif %}">
+                {{ t.option_type }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-right">${{ '%.2f'|format(t.strike|float) if t.strike else '—' }}</td>
+            <td class="px-4 py-3 text-right text-gray-500">{{ t.open_date|fmt_date }}</td>
+            <td class="px-4 py-3 text-right text-gray-500">{{ t.close_date|fmt_date }}</td>
+            <td class="px-4 py-3 text-right">
+              <span class="px-2 py-0.5 rounded text-xs font-medium
+                           {% if t.status == 'expired' %}bg-gray-100 text-gray-600
+                           {% elif t.status == 'assigned' %}bg-blue-100 text-blue-700
+                           {% else %}bg-green-100 text-green-700{% endif %}">
+                {{ t.status }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-right">{{ t.quantity }}</td>
+            <td class="px-4 py-3 text-right font-medium {% if t.net_premium_total >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+              ${{ '{:,.2f}'.format(t.net_premium_total) }}
+            </td>
+            <td class="px-4 py-3 text-right text-gray-600">{{ t.yield_pct | pct(2) if t.yield_pct else '—' }}</td>
+            <td class="px-4 py-3 text-right {% if t.annualized_yield and t.annualized_yield > 0 %}text-green-600{% else %}text-gray-700{% endif %}">
+              {{ t.annualized_yield | pct(1) if t.annualized_yield else '—' }}
+            </td>
+            <td class="px-4 py-3 text-right">
+              <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100">
+                <a href="{{ url_for('trades.edit_trade', trade_id=t.id) }}"
+                   class="p-1.5 text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 rounded">✎</a>
+                <form method="POST" action="{{ url_for('trades.delete_trade', trade_id=t.id) }}"
+                      onsubmit="return confirm('Delete?')">
+                  <button type="submit" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded">&#128465;</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="py-16 text-center text-gray-400">No closed trades yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Close Trade Modal -->
+<div x-data="closeModal()" @open-close-modal.window="open($event.detail)" x-cloak>
+  <div x-show="show" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div @click.outside="show=false" class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+      <h3 class="text-lg font-semibold mb-1">Close Trade</h3>
+      <p class="text-sm text-gray-500 mb-4" x-text="`${trade.symbol} ${trade.type} $${trade.strike}`"></p>
+      <form :action="`/trades/${trade.id}/close`" method="POST" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Close Premium (per share)</label>
+          <input type="number" name="close_premium" step="0.01" min="0" x-model="trade.close_premium"
+                 class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 placeholder="0.00" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Close Date</label>
+          <input type="date" name="close_date" x-model="trade.close_date"
+                 class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+          <select name="status"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            <option value="closed">Closed (BTC)</option>
+            <option value="expired">Expired (worthless)</option>
+            <option value="assigned">Assigned</option>
+          </select>
+        </div>
+        <div class="flex gap-3 pt-2">
+          <button type="button" @click="show=false"
+                  class="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+          <button type="submit"
+                  class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">Close Trade</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function closeModal() {
+  return {
+    show: false,
+    trade: { id: '', symbol: '', strike: '', type: '', close_premium: '', close_date: '' },
+    open(detail) {
+      this.trade = { ...detail, close_premium: '', close_date: new Date().toISOString().split('T')[0] };
+      this.show = true;
+    }
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Ticker Analysis — Options Wheel Tracker{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Ticker Analysis</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Deep dive into performance, trades, and positions for any ticker</p>
+  </div>
+
+  <!-- Search -->
+  <div class="bg-white rounded-xl border border-gray-200 p-5">
+    <form method="GET" action="{{ url_for('views.ticker') }}" class="flex gap-3">
+      <input type="text" name="q"
+             class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm uppercase focus:ring-2 focus:ring-blue-500 focus:outline-none"
+             placeholder="Search by symbol..." autofocus />
+      <button type="submit"
+              class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+        Search
+      </button>
+    </form>
+  </div>
+
+  <!-- Ticker pills -->
+  {% if tickers %}
+  <div class="bg-white rounded-xl border border-gray-200 p-5">
+    <h2 class="text-sm font-semibold text-gray-700 mb-3">Your Tickers</h2>
+    <div class="flex flex-wrap gap-2">
+      {% for t in tickers %}
+      <a href="{{ url_for('views.ticker_detail', symbol=t.symbol) }}"
+         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold text-white
+                {% if t.change_pct is not none and t.change_pct >= 0 %}bg-green-600 hover:bg-green-700
+                {% elif t.change_pct is not none %}bg-red-600 hover:bg-red-700
+                {% else %}bg-gray-500 hover:bg-gray-600{% endif %}
+                transition-colors">
+        {{ t.symbol }}
+        {% if t.change_pct is not none %}
+        <span class="text-xs opacity-80">{{ '%+.1f'|format(t.change_pct) }}%</span>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

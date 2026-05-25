@@ -30,7 +30,18 @@
       <p class="text-3xl font-bold mt-1 {% if total_net_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
         {{ total_net_pl | currency }}
       </p>
-      {% if stats.total_capital > 0 %}
+      {% if open_pos_pl != 0 %}
+      <div class="mt-1.5 space-y-0.5 text-xs">
+        <div class="flex justify-between text-gray-500">
+          <span>Options (realized)</span>
+          <span class="font-medium {% if premium_collected >= 0 %}text-green-600{% else %}text-red-600{% endif %}">{{ premium_collected | currency }}</span>
+        </div>
+        <div class="flex justify-between text-gray-500">
+          <span>Stocks (unrealized)</span>
+          <span class="font-medium {% if open_pos_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">{{ open_pos_pl | currency }}</span>
+        </div>
+      </div>
+      {% elif stats.total_capital > 0 %}
       <p class="text-xs mt-1 {% if return_pct >= 0 %}text-green-500{% else %}text-red-500{% endif %}">
         {{ '%+.1f'|format(return_pct) }}% on deployed capital
       </p>
@@ -74,7 +85,7 @@
                   .catch(() => { err = true; loading = false; })">
     <div class="flex items-center justify-between mb-4">
       <h2 class="font-semibold text-gray-900">Benchmark Comparison</h2>
-      <span class="text-xs text-gray-400">since {{ portfolio_start }}</span>
+      <span class="text-xs text-gray-400" x-text="bm && bm.start_used ? 'since ' + bm.start_used : 'since {{ portfolio_start }}'"></span>
     </div>
     <div class="grid grid-cols-3 gap-4 text-center">
       <!-- Portfolio -->

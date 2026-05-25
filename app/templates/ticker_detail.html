@@ -46,24 +46,33 @@
 
   <!-- P/L Summary Cards -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-    {% for pos in positions if pos.status == 'open' %}
+    {% if open_position_summary %}
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 uppercase font-medium">Open Position P/L</p>
-      <p class="text-2xl font-bold mt-1 {% if pos.open_pl and pos.open_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-        {{ pos.open_pl | currency }}
+      <p class="text-2xl font-bold mt-1 {% if open_position_summary.open_pl is not none and open_position_summary.open_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+        {% if open_position_summary.open_pl is not none %}{{ open_position_summary.open_pl | currency }}{% else %}—{% endif %}
       </p>
-      <p class="text-xs text-gray-400 mt-0.5">{{ pos.shares }} shares @ ${{ '%.2f'|format(pos.purchase_price|float) }}</p>
+      <p class="text-xs text-gray-400 mt-0.5">
+        {{ open_position_summary.shares }} shares @ ${{ '%.2f'|format(open_position_summary.avg_purchase_price) }} avg
+      </p>
+      {% if open_position_summary.lot_count > 1 %}
+      <p class="text-xs text-gray-400">{{ open_position_summary.lot_count }} lots</p>
+      {% endif %}
     </div>
-    {% endfor %}
+    {% endif %}
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 uppercase font-medium">Net Premiums</p>
       <p class="text-2xl font-bold text-green-600 mt-1">{{ net_premiums_total | currency }}</p>
+      <p class="text-xs text-gray-400 mt-0.5">all-time option income</p>
     </div>
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 uppercase font-medium">Net P/L</p>
       <p class="text-2xl font-bold mt-1 {% if net_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
         {{ net_pl | currency }}
       </p>
+      {% if open_position_summary and open_position_summary.open_pl is not none %}
+      <p class="text-xs text-gray-400 mt-0.5">premiums + unrealized stock P/L</p>
+      {% endif %}
     </div>
     {% if win_pct is not none %}
     <div class="bg-white rounded-xl border border-gray-200 p-4">

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Calendar — Options Wheel Tracker{% endblock %}
+
+{% block content %}
+<div x-data="calendarApp({{ month }}, {{ year }}, {{ calendar_data | tojson }})" class="space-y-6">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-gray-900">Trade Calendar</h1>
+    <div class="flex items-center gap-2">
+      <button @click="prev()" class="p-2 rounded-lg border border-gray-200 hover:bg-gray-50">&#8592;</button>
+      <span class="text-sm font-medium text-gray-700 w-36 text-center" x-text="monthLabel"></span>
+      <button @click="next()" class="p-2 rounded-lg border border-gray-200 hover:bg-gray-50">&#8594;</button>
+    </div>
+  </div>
+
+  <!-- Expiration date cards -->
+  <div class="space-y-4">
+    <template x-if="visibleDates.length === 0">
+      <div class="text-center py-16 text-gray-400">No expirations in this month.</div>
+    </template>
+    <template x-for="exp in visibleDates" :key="exp.date">
+      <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <!-- Date header -->
+        <div class="px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <span class="font-semibold text-gray-900" x-text="formatDate(exp.date)"></span>
+            <span class="ml-2 text-xs text-gray-400" x-text="`${exp.data.trade_count} trade${exp.data.trade_count !== 1 ? 's' : ''}`"></span>
+          </div>
+          <div class="flex gap-6 text-sm">
+            <div>
+              <span class="text-gray-500 text-xs">Capital at Risk</span>
+              <p class="font-semibold text-blue-600" x-text="`$${exp.data.capital_at_risk.toLocaleString('en-US', {maximumFractionDigits: 0})}`"></p>
+            </div>
+            <div>
+              <span class="text-gray-500 text-xs">Net Premiums</span>
+              <p class="font-semibold text-green-600" x-text="`+$${exp.data.net_premiums.toFixed(2)}`"></p>
+            </div>
+          </div>
+        </div>
+        <!-- Trades grid -->
+        <div class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          <template x-for="t in exp.data.trades" :key="t.id">
+            <div class="rounded-lg border p-3"
+                 :class="t.option_type === 'CC' || t.option_type === 'Call' ? 'border-purple-200 bg-purple-50' : 'border-orange-200 bg-orange-50'">
+              <div class="flex items-center justify-between mb-1">
+                <span class="font-bold text-sm" x-text="t.symbol"></span>
+                <span class="text-xs font-medium px-1.5 py-0.5 rounded"
+                      :class="t.option_type === 'CC' || t.option_type === 'Call' ? 'bg-purple-200 text-purple-700' : 'bg-orange-200 text-orange-700'"
+                      x-text="t.option_type"></span>
+              </div>
+              <div class="text-xs text-gray-600 space-y-0.5">
+                <div class="flex justify-between">
+                  <span>Strike</span>
+                  <span class="font-medium" x-text="t.strike ? `$${parseFloat(t.strike).toFixed(2)}` : '—'"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Curr</span>
+                  <span class="font-medium" x-text="t.current_price ? `$${parseFloat(t.current_price).toFixed(2)}` : '—'"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Premium</span>
+                  <span class="font-medium text-green-700" x-text="t.net_premium_total ? `+$${parseFloat(t.net_premium_total).toFixed(2)}` : '—'"></span>
+                </div>
+                <div class="flex justify-between" x-show="t.quantity > 1">
+                  <span>Qty</span>
+                  <span class="font-medium" x-text="`x${t.quantity}`"></span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<script>
+function calendarApp(initMonth, initYear, calendarData) {
+  const monthNames = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+  return {
+    month: initMonth,
+    year: initYear,
+    calendarData,
+    get monthLabel() { return `${monthNames[this.month - 1]} ${this.year}`; },
+    get visibleDates() {
+      return Object.entries(this.calendarData)
+        .filter(([d]) => {
+          const dt = new Date(d + 'T00:00:00');
+          return dt.getMonth() + 1 === this.month && dt.getFullYear() === this.year;
+        })
+        .map(([date, data]) => ({ date, data }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+    },
+    prev() {
+      if (this.month === 1) { this.month = 12; this.year--; }
+      else this.month--;
+    },
+    next() {
+      if (this.month === 12) { this.month = 1; this.year++; }
+      else this.month++;
+    },
+    formatDate(d) {
+      const dt = new Date(d + 'T00:00:00');
+      return dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    }
+  }
+}
+</script>
+{% endblock %}

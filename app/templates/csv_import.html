@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Import Trades — Options Wheel Tracker{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl space-y-6">
+  <div class="flex items-center gap-3">
+    <a href="{{ url_for('trades.index') }}" class="text-gray-400 hover:text-gray-600">&#8592; Trades</a>
+    <h1 class="text-2xl font-bold text-gray-900">Import from Robinhood</h1>
+  </div>
+
+  <div class="bg-white rounded-2xl border border-gray-200 p-6">
+    <form method="POST" enctype="multipart/form-data" class="space-y-5">
+      <div x-data="{ dragging: false, fileName: '' }"
+           class="border-2 border-dashed rounded-xl p-8 text-center transition-colors"
+           :class="dragging ? 'border-blue-400 bg-blue-50' : 'border-gray-300'"
+           @dragover.prevent="dragging=true"
+           @dragleave.prevent="dragging=false"
+           @drop.prevent="dragging=false; $refs.fileInput.files=$event.dataTransfer.files; fileName=$event.dataTransfer.files[0]?.name">
+        <svg class="w-10 h-10 text-gray-400 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <p class="text-sm text-gray-600 mb-1">
+          <label class="cursor-pointer text-blue-600 hover:underline">
+            Choose file
+            <input type="file" name="file" accept=".csv,.xlsx,.xls" required
+                   class="hidden" x-ref="fileInput"
+                   @change="fileName = $event.target.files[0]?.name" />
+          </label>
+          or drag & drop
+        </p>
+        <p class="text-xs text-gray-400">CSV or Excel (.xlsx) — Robinhood account history export</p>
+        <p x-show="fileName" class="mt-3 text-sm font-medium text-blue-600" x-text="fileName"></p>
+      </div>
+
+      <div class="bg-gray-50 rounded-xl p-4 text-sm text-gray-600">
+        <p class="font-medium text-gray-900 mb-2">How to export from Robinhood:</p>
+        <ol class="list-decimal list-inside space-y-1 text-gray-600">
+          <li>Open Robinhood app or web → Account → History</li>
+          <li>Filter by the date range you want</li>
+          <li>Click "Download" or export as CSV</li>
+          <li>Upload the file here</li>
+        </ol>
+        <p class="mt-3 text-xs text-gray-400">
+          Expected columns: Activity Date, Process Date, Settle Date, Instrument, Description, Trans Code, Quantity, Price, Amount
+        </p>
+      </div>
+
+      <button type="submit"
+              class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-sm transition-colors">
+        Upload & Preview
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

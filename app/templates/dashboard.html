@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Options Wheel Tracker{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
+
+  <!-- KPI Cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Open Trades</p>
+      <p class="text-3xl font-bold text-gray-900 mt-1">{{ stats.open_trades_count }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">% ITM</p>
+      <p class="text-3xl font-bold mt-1 {% if stats.itm_pct > 30 %}text-red-600{% else %}text-green-600{% endif %}">
+        {{ '%.1f'|format(stats.itm_pct) }}%
+        <span class="text-lg text-gray-400 font-normal">[{{ stats.itm_count }}/{{ stats.open_trades_count }}]</span>
+      </p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Open Net Premium</p>
+      <p class="text-3xl font-bold text-green-600 mt-1">${{ '{:,.0f}'.format(stats.open_trades_net_premium) }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Avg Annualized Yield</p>
+      <p class="text-3xl font-bold text-green-600 mt-1">{{ '%.1f'|format(stats.avg_annualized_yield) }}%</p>
+      <p class="text-xs text-gray-400 mt-1">avg {{ '%.0f'|format(stats.avg_dte) }} DTE</p>
+    </div>
+  </div>
+
+  <!-- Capital Row -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Open Trades Capital</p>
+      <p class="text-2xl font-bold text-blue-600 mt-1">${{ '{:,.0f}'.format(stats.open_trades_capital) }}</p>
+      <p class="text-xs text-gray-400 mt-1">CCs: ${{ '{:,.0f}'.format(stats.cc_capital) }} | Puts: ${{ '{:,.0f}'.format(stats.put_capital) }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Total Capital</p>
+      <p class="text-2xl font-bold text-blue-600 mt-1">${{ '{:,.0f}'.format(stats.total_capital) }}</p>
+      <p class="text-xs text-gray-400 mt-1">Trades: ${{ '{:,.0f}'.format(stats.open_trades_capital) }} | Positions: ${{ '{:,.0f}'.format(stats.positions_capital) }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">YTD Closed P/L</p>
+      <p class="text-2xl font-bold mt-1 {% if ytd_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+        {{ ytd_pl | currency }}
+      </p>
+    </div>
+  </div>
+
+  <!-- Upcoming Expirations -->
+  {% if upcoming_expirations %}
+  <div class="bg-white rounded-xl border border-gray-200">
+    <div class="px-5 py-4 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-900">Expiring in 14 Days</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+          <tr>
+            <th class="px-4 py-3 text-left">Symbol</th>
+            <th class="px-4 py-3 text-left">Type</th>
+            <th class="px-4 py-3 text-right">Strike</th>
+            <th class="px-4 py-3 text-right">Expiration</th>
+            <th class="px-4 py-3 text-right">DTE</th>
+            <th class="px-4 py-3 text-right">ITM/OTM</th>
+            <th class="px-4 py-3 text-right">Net Premium</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for t in upcoming_expirations %}
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3 font-semibold">
+              <a href="{{ url_for('views.ticker_detail', symbol=t.symbol) }}" class="text-blue-600 hover:underline">{{ t.symbol }}</a>
+            </td>
+            <td class="px-4 py-3">
+              <span class="px-2 py-0.5 rounded text-xs font-medium
+                           {% if t.option_type in ('CC','Call') %}bg-purple-100 text-purple-700
+                           {% else %}bg-orange-100 text-orange-700{% endif %}">
+                {{ t.option_type }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-right">${{ '%.2f'|format(t.strike|float) }}</td>
+            <td class="px-4 py-3 text-right">{{ t.expiration_date|fmt_date }}</td>
+            <td class="px-4 py-3 text-right font-medium {% if t.dte <= 7 %}text-red-600{% elif t.dte <= 14 %}text-yellow-600{% endif %}">
+              {{ t.dte }}d
+            </td>
+            <td class="px-4 py-3 text-right">
+              {% if t.itm_otm_pct is not none %}
+              <span class="font-medium {% if t.itm_otm_pct > 0 %}text-red-600{% else %}text-green-600{% endif %}">
+                {{ t.itm_otm_pct | pct(1) }}
+              </span>
+              {% else %}N/A{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right font-medium text-green-600">
+              ${{ '{:,.2f}'.format(t.net_premium_total) }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Quick actions -->
+  <div class="flex flex-wrap gap-3">
+    <a href="{{ url_for('trades.new_trade') }}"
+       class="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+      + Add Trade
+    </a>
+    <a href="{{ url_for('trades.import_csv') }}"
+       class="inline-flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium px-4 py-2 rounded-lg border border-gray-200 transition-colors">
+      Import CSV
+    </a>
+    <a href="{{ url_for('trades.import_ai') }}"
+       class="inline-flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium px-4 py-2 rounded-lg border border-gray-200 transition-colors">
+      ✨ AI Import
+    </a>
+  </div>
+</div>
+{% endblock %}

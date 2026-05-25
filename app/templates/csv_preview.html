@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Import Preview — Options Wheel Tracker{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex items-center gap-3">
+    <a href="{{ url_for('trades.import_csv') }}" class="text-gray-400 hover:text-gray-600">&#8592; Upload</a>
+    <h1 class="text-2xl font-bold text-gray-900">Import Preview</h1>
+  </div>
+
+  {% if error_rows %}
+  <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+    <p class="text-sm font-medium text-yellow-800">{{ error_rows|length }} row(s) could not be parsed and will be skipped.</p>
+  </div>
+  {% endif %}
+
+  <form method="POST" action="{{ url_for('trades.import_csv_confirm') }}">
+    <div class="bg-white rounded-xl border border-gray-200">
+      <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h2 class="font-semibold text-gray-900">{{ valid_rows|length }} trades to import</h2>
+        <div class="flex gap-2 text-sm">
+          <button type="button" onclick="toggleAll(true)" class="text-blue-600 hover:underline">Select all</button>
+          <span class="text-gray-300">|</span>
+          <button type="button" onclick="toggleAll(false)" class="text-gray-500 hover:underline">Deselect all</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+            <tr>
+              <th class="px-4 py-3 text-left w-10">
+                <input type="checkbox" checked onchange="toggleAll(this.checked)" class="rounded" />
+              </th>
+              <th class="px-4 py-3 text-left">Symbol</th>
+              <th class="px-4 py-3 text-left">Type</th>
+              <th class="px-4 py-3 text-right">Strike</th>
+              <th class="px-4 py-3 text-right">Expiration</th>
+              <th class="px-4 py-3 text-right">Qty</th>
+              <th class="px-4 py-3 text-right">Open Prem</th>
+              <th class="px-4 py-3 text-right">Close Prem</th>
+              <th class="px-4 py-3 text-right">Open Date</th>
+              <th class="px-4 py-3 text-right">Status</th>
+              <th class="px-4 py-3 text-right">RH Code</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-50">
+            {% for row in valid_rows %}{% set i = loop.index0 %}
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-3">
+                <input type="checkbox" name="selected" value="{{ i }}" checked class="rounded" />
+              </td>
+              <td class="px-4 py-3 font-semibold">{{ row.symbol }}</td>
+              <td class="px-4 py-3">
+                <span class="px-2 py-0.5 rounded text-xs font-medium
+                             {% if row.option_type in ('CC','Call') %}bg-purple-100 text-purple-700
+                             {% elif row.option_type in ('CSP','Put') %}bg-orange-100 text-orange-700
+                             {% else %}bg-gray-100 text-gray-700{% endif %}">
+                  {{ row.option_type }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-right">${{ '%.2f'|format(row.strike|float) if row.strike else '—' }}</td>
+              <td class="px-4 py-3 text-right text-gray-500">{{ row.expiration_date or '—' }}</td>
+              <td class="px-4 py-3 text-right">{{ row.quantity }}</td>
+              <td class="px-4 py-3 text-right text-green-600">
+                {% if row.open_premium %}${{ '%.4f'|format(row.open_premium|float) }}{% else %}—{% endif %}
+              </td>
+              <td class="px-4 py-3 text-right text-red-600">
+                {% if row.close_premium %}${{ '%.4f'|format(row.close_premium|float) }}{% else %}—{% endif %}
+              </td>
+              <td class="px-4 py-3 text-right text-gray-500">{{ row.open_date or '—' }}</td>
+              <td class="px-4 py-3 text-right">
+                <span class="px-1.5 py-0.5 rounded text-xs
+                             {% if row.status == 'open' %}bg-blue-100 text-blue-700
+                             {% elif row.status == 'expired' %}bg-gray-100 text-gray-600
+                             {% else %}bg-green-100 text-green-700{% endif %}">
+                  {{ row.status }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-right text-xs text-gray-400">{{ row.rh_trans_code or '' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="px-5 py-4 border-t border-gray-100 flex gap-3 justify-end">
+        <a href="{{ url_for('trades.import_csv') }}"
+           class="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-50">Cancel</a>
+        <button type="submit"
+                class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+          Import Selected
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+function toggleAll(checked) {
+  document.querySelectorAll('input[name="selected"]').forEach(cb => cb.checked = checked);
+}
+</script>
+{% endblock %}

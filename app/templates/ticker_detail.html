@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} — Ticker Analysis{% endblock %}
+
+{% block head %}
+<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div class="flex items-center gap-4">
+      <a href="{{ url_for('views.ticker') }}" class="text-gray-400 hover:text-gray-600">&#8592;</a>
+      <div>
+        <h1 class="text-3xl font-bold text-gray-900">{{ symbol }}</h1>
+        <div class="flex items-center gap-3 mt-1">
+          {% if price_data.price %}
+          <span class="text-2xl font-semibold">${{ '%.2f'|format(price_data.price) }}</span>
+          {% if price_data.change_pct is not none %}
+          <span class="text-sm font-medium px-2 py-0.5 rounded
+                       {% if price_data.change_pct >= 0 %}bg-green-100 text-green-700{% else %}bg-red-100 text-red-700{% endif %}">
+            {% if price_data.change_pct >= 0 %}▲{% else %}▼{% endif %}
+            {{ '%.2f'|format(price_data.change_pct|abs) }}%
+          </span>
+          {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <!-- Period selector -->
+    <div class="flex gap-1">
+      {% for p in periods %}
+      <a href="{{ url_for('views.ticker_detail', symbol=symbol, period=p) }}"
+         class="px-3 py-1 text-sm rounded-lg
+                {% if period == p %}bg-blue-600 text-white{% else %}bg-white border border-gray-200 text-gray-600 hover:bg-gray-50{% endif %}">
+        {{ p }}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Price Chart -->
+  <div class="bg-white rounded-xl border border-gray-200 p-4">
+    <div id="price-chart" style="height: 320px;"></div>
+  </div>
+
+  <!-- P/L Summary Cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    {% for pos in positions if pos.status == 'open' %}
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase font-medium">Open Position P/L</p>
+      <p class="text-2xl font-bold mt-1 {% if pos.open_pl and pos.open_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+        {{ pos.open_pl | currency }}
+      </p>
+      <p class="text-xs text-gray-400 mt-0.5">{{ pos.shares }} shares @ ${{ '%.2f'|format(pos.purchase_price|float) }}</p>
+    </div>
+    {% endfor %}
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase font-medium">Net Premiums</p>
+      <p class="text-2xl font-bold text-green-600 mt-1">{{ net_premiums_total | currency }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase font-medium">Net P/L</p>
+      <p class="text-2xl font-bold mt-1 {% if net_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+        {{ net_pl | currency }}
+      </p>
+    </div>
+    {% if win_pct is not none %}
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 uppercase font-medium">Win Rate</p>
+      <p class="text-2xl font-bold text-green-600 mt-1">{{ '%.1f'|format(win_pct) }}%</p>
+      <p class="text-xs text-gray-400 mt-0.5">{{ closed_trades|length }} closed trades</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Open Trades -->
+  {% if open_trades %}
+  <div class="bg-white rounded-xl border border-gray-200">
+    <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="font-semibold text-gray-900">Open Trades</h2>
+      <a href="{{ url_for('trades.new_trade') }}?symbol={{ symbol }}"
+         class="text-sm text-blue-600 hover:underline">+ Add Trade</a>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+          <tr>
+            <th class="px-4 py-3 text-left">Type</th>
+            <th class="px-4 py-3 text-right">ITM/OTM</th>
+            <th class="px-4 py-3 text-right">Strike</th>
+            <th class="px-4 py-3 text-right">Break-Even</th>
+            <th class="px-4 py-3 text-right">Expiration</th>
+            <th class="px-4 py-3 text-right">Qty</th>
+            <th class="px-4 py-3 text-right">Premium</th>
+            <th class="px-4 py-3 text-right">Yield</th>
+            <th class="px-4 py-3 text-right">Ann. Yield</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for t in open_trades %}
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3">
+              <span class="px-2 py-0.5 rounded text-xs font-medium
+                           {% if t.option_type in ('CC','Call') %}bg-purple-100 text-purple-700
+                           {% else %}bg-orange-100 text-orange-700{% endif %}">
+                {{ t.option_type }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-right">
+              {% if t.itm_otm_pct is not none %}
+              <span class="text-xs font-semibold px-2 py-0.5 rounded
+                           {% if t.itm_otm_pct > 0 %}bg-red-100 text-red-700{% else %}bg-green-100 text-green-700{% endif %}">
+                {{ t.itm_otm_pct | pct(2) }}
+              </span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">${{ '%.2f'|format(t.strike|float) if t.strike else '—' }}</td>
+            <td class="px-4 py-3 text-right text-gray-600">
+              {% if t.strike and t.open_premium %}
+              ${{ '%.2f'|format((t.strike|float) - (t.open_premium|float)) }}
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">{{ t.expiration_date|fmt_date }}</td>
+            <td class="px-4 py-3 text-right">{{ t.quantity }}</td>
+            <td class="px-4 py-3 text-right text-green-600 font-medium">${{ '%.2f'|format(t.open_premium|float) if t.open_premium else '—' }}</td>
+            <td class="px-4 py-3 text-right text-gray-600">{{ t.yield_pct | pct(2) if t.yield_pct else '—' }}</td>
+            <td class="px-4 py-3 text-right {% if t.annualized_yield and t.annualized_yield > 0 %}text-green-600{% endif %}">
+              {{ t.annualized_yield | pct(1) if t.annualized_yield else '—' }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Closed Trades -->
+  {% if closed_trades %}
+  <div class="bg-white rounded-xl border border-gray-200">
+    <div class="px-5 py-4 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-900">Closed Trades ({{ closed_trades|length }})</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+          <tr>
+            <th class="px-4 py-3 text-left">Type</th>
+            <th class="px-4 py-3 text-right">Strike</th>
+            <th class="px-4 py-3 text-right">Open</th>
+            <th class="px-4 py-3 text-right">Close</th>
+            <th class="px-4 py-3 text-right">Status</th>
+            <th class="px-4 py-3 text-right">Qty</th>
+            <th class="px-4 py-3 text-right">Net Premium</th>
+            <th class="px-4 py-3 text-right">Ann. Yield</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for t in closed_trades %}
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3">
+              <span class="px-2 py-0.5 rounded text-xs font-medium
+                           {% if t.option_type in ('CC','Call') %}bg-purple-100 text-purple-700
+                           {% else %}bg-orange-100 text-orange-700{% endif %}">
+                {{ t.option_type }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-right">${{ '%.2f'|format(t.strike|float) if t.strike else '—' }}</td>
+            <td class="px-4 py-3 text-right text-gray-500">{{ t.open_date|fmt_date }}</td>
+            <td class="px-4 py-3 text-right text-gray-500">{{ t.close_date|fmt_date }}</td>
+            <td class="px-4 py-3 text-right">
+              <span class="px-2 py-0.5 rounded text-xs
+                           {% if t.status == 'expired' %}bg-gray-100 text-gray-600
+                           {% elif t.status == 'assigned' %}bg-blue-100 text-blue-700
+                           {% else %}bg-green-100 text-green-700{% endif %}">
+                {{ t.status }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-right">{{ t.quantity }}</td>
+            <td class="px-4 py-3 text-right font-medium {% if t.net_premium_total >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+              ${{ '{:,.2f}'.format(t.net_premium_total) }}
+            </td>
+            <td class="px-4 py-3 text-right {% if t.annualized_yield and t.annualized_yield > 0 %}text-green-600{% endif %}">
+              {{ t.annualized_yield | pct(1) if t.annualized_yield else '—' }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% block scripts %}
+<script>
+const priceHistory = {{ price_history | tojson }};
+if (priceHistory.length > 0) {
+  const chart = LightweightCharts.createChart(document.getElementById('price-chart'), {
+    width: document.getElementById('price-chart').clientWidth,
+    height: 320,
+    layout: { background: { color: '#ffffff' }, textColor: '#374151' },
+    grid: { vertLines: { color: '#f3f4f6' }, horzLines: { color: '#f3f4f6' } },
+    rightPriceScale: { borderColor: '#e5e7eb' },
+    timeScale: { borderColor: '#e5e7eb', timeVisible: true },
+  });
+  const candleSeries = chart.addCandlestickSeries({
+    upColor: '#16a34a', downColor: '#dc2626',
+    borderUpColor: '#16a34a', borderDownColor: '#dc2626',
+    wickUpColor: '#16a34a', wickDownColor: '#dc2626',
+  });
+  candleSeries.setData(priceHistory);
+  chart.timeScale().fitContent();
+
+  // Resize on window resize
+  window.addEventListener('resize', () => {
+    chart.applyOptions({ width: document.getElementById('price-chart').clientWidth });
+  });
+}
+</script>
+{% endblock %}
+{% endblock %}

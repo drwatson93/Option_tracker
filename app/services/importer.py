@@ -16,12 +16,22 @@ ROBINHOOD_COLUMNS = {
 
 
 def _parse_date(value) -> Optional[str]:
-    if pd.isna(value):
+    if value is None:
         return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    # pd.Timestamp or datetime (returned when Excel parsed without dtype=str)
+    if isinstance(value, pd.Timestamp):
+        return value.strftime('%Y-%m-%d')
     if isinstance(value, datetime):
         return value.strftime('%Y-%m-%d')
     s = str(value).strip()
-    for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%m/%d/%y'):
+    if not s or s.lower() in ('nan', 'nat', 'none', ''):
+        return None
+    for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%m/%d/%y', '%Y-%m-%d %H:%M:%S'):
         try:
             return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
         except ValueError:
@@ -227,7 +237,8 @@ def parse_robinhood_file(file_bytes: bytes, filename: str) -> tuple[list[dict], 
     buf = io.BytesIO(file_bytes)
 
     if ext in ('xlsx', 'xls'):
-        df = pd.read_excel(buf, dtype=str)
+        # Don't force dtype=str — let pandas parse date columns as Timestamps
+        df = pd.read_excel(buf)
     else:
         df = pd.read_csv(buf, dtype=str)
 

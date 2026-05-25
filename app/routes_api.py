@@ -28,6 +28,17 @@ def prices():
     return jsonify(data)
 
 
+@api_bp.route('/benchmark')
+@login_required
+def benchmark():
+    from flask import request as req
+    start = req.args.get('start', '').strip()
+    if not start:
+        return jsonify({})
+    data = market_data.get_benchmark_returns(start)
+    return jsonify(data)
+
+
 @api_bp.route('/debug')
 @login_required
 def debug():

@@ -5,10 +5,90 @@ from app.auth import login_required
 from app.db import get_db
 from app.services import market_data as md
 from app.services.calculations import (
-    enrich_trade, enrich_position, portfolio_stats, net_premium_total
+    enrich_trade, enrich_position, portfolio_stats, net_premium_total,
+    days_held, yield_pct, annualized_yield,
 )
 
 views_bp = Blueprint('views', __name__)
+
+
+# ──────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────
+
+def _monthly_earnings(all_trades: list, n: int = 6) -> list[dict]:
+    """Net premium collected per calendar month for the last n months."""
+    today = date.today()
+    month_earnings: dict = {}
+    for t in all_trades:
+        if t.get('status') != 'open' and t.get('close_date'):
+            key = str(t['close_date'])[:7]  # YYYY-MM
+            npt = net_premium_total(
+                float(t.get('open_premium') or 0),
+                float(t['close_premium']) if t.get('close_premium') is not None else None,
+                int(t.get('quantity') or 1),
+                float(t.get('fees') or 0),
+            )
+            month_earnings[key] = month_earnings.get(key, 0.0) + npt
+
+    result = []
+    for i in range(n - 1, -1, -1):
+        m = today.month - i
+        y = today.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        key = f'{y}-{m:02d}'
+        result.append({
+            'key': key,
+            'label': date(y, m, 1).strftime('%b %Y'),
+            'earnings': round(month_earnings.get(key, 0.0), 2),
+        })
+    return result
+
+
+def _per_symbol_stats(all_trades: list) -> dict:
+    """Aggregated per-symbol stats from all trades."""
+    stats: dict = {}
+    for t in all_trades:
+        sym = (t.get('symbol') or '').upper()
+        if not sym:
+            continue
+        if sym not in stats:
+            stats[sym] = {
+                'symbol': sym, 'trade_count': 0, 'contracts': 0,
+                'dte_days': 0, 'net_premium': 0.0,
+                'ann_yield_sum': 0.0, 'ann_yield_count': 0,
+                'position_pl': 0.0,
+            }
+        npt = net_premium_total(
+            float(t.get('open_premium') or 0),
+            float(t['close_premium']) if t.get('close_premium') is not None else None,
+            int(t.get('quantity') or 1),
+            float(t.get('fees') or 0),
+        )
+        qty = abs(int(t.get('quantity') or 1))
+        dh = days_held(t.get('open_date'), t.get('close_date'))
+        stats[sym]['trade_count'] += 1
+        stats[sym]['contracts'] += qty
+        stats[sym]['net_premium'] += npt
+        stats[sym]['dte_days'] += dh
+        strike = float(t.get('strike') or 0)
+        if strike:
+            yp = yield_pct(npt, strike, qty)
+            if yp is not None:
+                ay = annualized_yield(yp, dh)
+                stats[sym]['ann_yield_sum'] += ay
+                stats[sym]['ann_yield_count'] += 1
+
+    for s in stats.values():
+        s['avg_dte'] = round(s['dte_days'] / s['trade_count'], 1) if s['trade_count'] else 0
+        s['avg_ann_yield'] = round(
+            s['ann_yield_sum'] / s['ann_yield_count'], 2
+        ) if s['ann_yield_count'] else 0
+        s['net_pl'] = s['net_premium']  # updated below with position P/L
+
+    return stats
 
 
 # ──────────────────────────────────────────────
@@ -35,7 +115,6 @@ def dashboard():
     def _price(sym):
         return prices.get(sym.upper(), {}).get('price') or None
 
-    # Total open shares per symbol for proportional premium attribution
     total_open_shares: dict = {}
     for p in open_positions_raw:
         sym = p['symbol'].upper()
@@ -58,7 +137,19 @@ def dashboard():
     closed_enriched = [enrich_trade(t, _price(t['symbol'])) for t in closed_trades_raw]
     closed_net_premium = sum(t.get('net_premium_total') or 0 for t in closed_enriched)
 
-    # Avg annualized yield: open trades if any, otherwise all closed trades
+    # All-time premium collected (open + closed)
+    premium_collected = closed_net_premium + stats['open_trades_net_premium']
+
+    # Open position unrealized P/L
+    open_pos_pl = sum(p.get('open_pl') or 0 for p in open_positions)
+
+    # Total net P/L = all premiums + unrealized position gains/losses
+    total_net_pl = premium_collected + open_pos_pl
+
+    # Return % on currently deployed capital
+    return_pct = (total_net_pl / stats['total_capital'] * 100) if stats['total_capital'] else 0.0
+
+    # Avg annualized yield label
     if open_trades:
         display_ann_yield = stats['avg_annualized_yield']
         yield_label = 'avg open ann. yield'
@@ -94,14 +185,55 @@ def dashboard():
         for t in closed_ytd
     )
 
+    # Monthly earnings (last 6 months)
+    monthly_earnings = _monthly_earnings(all_trades)
+    monthly_max = max((abs(m['earnings']) for m in monthly_earnings), default=1) or 1
+
+    # Per-symbol stats for leaders/laggards tables
+    sym_stats = _per_symbol_stats(all_trades)
+    for p in open_positions:
+        sym = p['symbol'].upper()
+        pl = p.get('open_pl') or 0
+        if sym in sym_stats:
+            sym_stats[sym]['position_pl'] += pl
+            sym_stats[sym]['net_pl'] = sym_stats[sym]['net_premium'] + sym_stats[sym]['position_pl']
+        else:
+            sym_stats[sym] = {
+                'symbol': sym, 'trade_count': 0, 'contracts': 0,
+                'avg_dte': 0, 'net_premium': 0.0, 'avg_ann_yield': 0,
+                'position_pl': pl, 'net_pl': pl,
+            }
+
+    leaders_by_premium = sorted(
+        [s for s in sym_stats.values() if s['trade_count'] > 0],
+        key=lambda x: x['net_premium'], reverse=True
+    )[:5]
+    all_sym_pl = sorted(sym_stats.values(), key=lambda x: x['net_pl'], reverse=True)
+    leaders_by_pl = all_sym_pl[:5]
+    laggards_by_pl = list(reversed(all_sym_pl))[:5]
+
+    # Portfolio start date for benchmark reference
+    open_dates = [t.get('open_date') for t in all_trades if t.get('open_date')]
+    portfolio_start = min(open_dates)[:10] if open_dates else None
+
     return render_template(
         'dashboard.html',
         stats=stats,
         upcoming_expirations=upcoming,
         ytd_pl=ytd_pl,
         closed_net_premium=closed_net_premium,
+        premium_collected=premium_collected,
+        open_pos_pl=open_pos_pl,
+        total_net_pl=total_net_pl,
+        return_pct=return_pct,
         display_ann_yield=display_ann_yield,
         yield_label=yield_label,
+        monthly_earnings=monthly_earnings,
+        monthly_max=monthly_max,
+        leaders_by_premium=leaders_by_premium,
+        leaders_by_pl=leaders_by_pl,
+        laggards_by_pl=laggards_by_pl,
+        portfolio_start=portfolio_start,
         today=today.isoformat(),
     )
 
@@ -117,7 +249,6 @@ def calendar():
     all_res = db.table('trades').select('*').execute()
     all_trades = all_res.data or []
 
-    # Group all trades by expiration_date
     by_date = defaultdict(list)
     for t in all_trades:
         exp = t.get('expiration_date')
@@ -141,8 +272,22 @@ def calendar():
             if t.get('option_type') in ('CC', 'CSP', 'Call', 'Put')
         )
 
+        # Strip fields that can contain large/problematic strings from trade dicts
+        safe_trades = []
+        for e in enriched:
+            safe_trades.append({
+                'id': e.get('id'),
+                'symbol': e.get('symbol'),
+                'option_type': e.get('option_type'),
+                'strike': e.get('strike'),
+                'status': e.get('status'),
+                'quantity': e.get('quantity'),
+                'current_price': e.get('current_price'),
+                'net_premium_total': e.get('net_premium_total'),
+            })
+
         calendar_data[exp_date] = {
-            'trades': enriched,
+            'trades': safe_trades,
             'capital_at_risk': capital_at_risk,
             'net_premiums': net_prems,
             'trade_count': len(trades),
@@ -182,7 +327,6 @@ def ticker():
     if search:
         return redirect(url_for('views.ticker_detail', symbol=search))
 
-    # Get prices for all ticker pills
     prices = md.get_prices_bulk(symbols) if symbols else {}
 
     tickers_with_state = []
@@ -210,7 +354,7 @@ def ticker_detail(symbol: str):
     positions_raw = pos_res.data or []
 
     price_data = md.get_price(symbol)
-    current_price = price_data.get('price')
+    current_price = price_data.get('price') or None
 
     period = request.args.get('period', '6M').upper()
     period_map = {'1M': '1mo', '3M': '3mo', '6M': '6mo', '1Y': '1y', '2Y': '2y'}
@@ -231,7 +375,6 @@ def ticker_detail(symbol: str):
         for p in positions_raw
     ]
 
-    # Per-ticker P/L summary
     net_premiums_total = sum(
         net_premium_total(
             float(t.get('open_premium') or 0),

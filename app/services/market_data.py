@@ -13,26 +13,23 @@ def get_price(symbol: str) -> dict:
         return cached
 
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.fast_info
-        price = float(info.last_price or 0)
-        prev_close = float(info.previous_close or 0)
-    except Exception:
-        # Return stale cache if available, otherwise zeros
+        hist = yf.Ticker(symbol).history(period='5d', auto_adjust=True)
+        prices = hist['Close'].dropna()
+        if prices.empty:
+            raise ValueError('no price data returned')
+        price = float(prices.iloc[-1])
+        prev = float(prices.iloc[-2]) if len(prices) > 1 else price
+        change_pct = ((price - prev) / prev * 100) if prev else 0.0
+        result = {
+            'symbol': symbol, 'price': price, 'prev_close': prev,
+            'change_pct': change_pct, 'ts': time.time(), 'error': False,
+        }
+    except Exception as exc:
         if cached:
             return cached
-        return {'symbol': symbol, 'price': 0.0, 'prev_close': 0.0,
-                'change_pct': 0.0, 'ts': time.time(), 'error': True}
-
-    change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
-    result = {
-        'symbol': symbol,
-        'price': price,
-        'prev_close': prev_close,
-        'change_pct': change_pct,
-        'ts': time.time(),
-        'error': False,
-    }
+        result = {'symbol': symbol, 'price': 0.0, 'prev_close': 0.0,
+                  'change_pct': 0.0, 'ts': time.time(), 'error': True,
+                  'error_msg': str(exc)}
     _cache[symbol] = result
     return result
 

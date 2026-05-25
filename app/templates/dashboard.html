@@ -24,13 +24,13 @@
     </div>
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Avg Annualized Yield</p>
-      <p class="text-3xl font-bold text-green-600 mt-1">{{ '%.1f'|format(stats.avg_annualized_yield) }}%</p>
-      <p class="text-xs text-gray-400 mt-1">avg {{ '%.0f'|format(stats.avg_dte) }} DTE</p>
+      <p class="text-3xl font-bold text-green-600 mt-1">{{ '%.1f'|format(display_ann_yield) }}%</p>
+      <p class="text-xs text-gray-400 mt-1">{{ yield_label }}</p>
     </div>
   </div>
 
   <!-- Capital Row -->
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Open Trades Capital</p>
       <p class="text-2xl font-bold text-blue-600 mt-1">${{ '{:,.0f}'.format(stats.open_trades_capital) }}</p>
@@ -40,6 +40,13 @@
       <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Total Capital</p>
       <p class="text-2xl font-bold text-blue-600 mt-1">${{ '{:,.0f}'.format(stats.total_capital) }}</p>
       <p class="text-xs text-gray-400 mt-1">Trades: ${{ '{:,.0f}'.format(stats.open_trades_capital) }} | Positions: ${{ '{:,.0f}'.format(stats.positions_capital) }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Closed Net Premium</p>
+      <p class="text-2xl font-bold mt-1 {% if closed_net_premium >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+        {{ closed_net_premium | currency }}
+      </p>
+      <p class="text-xs text-gray-400 mt-1">all-time collected</p>
     </div>
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">YTD Closed P/L</p>

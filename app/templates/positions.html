@@ -130,9 +130,10 @@
             <th class="px-4 py-3 text-left">Symbol</th>
             <th class="px-4 py-3 text-right">Shares</th>
             <th class="px-4 py-3 text-right">Purchase Price</th>
+            <th class="px-4 py-3 text-right">Close Price</th>
             <th class="px-4 py-3 text-right">Open Date</th>
             <th class="px-4 py-3 text-right">Close Date</th>
-            <th class="px-4 py-3 text-right">Net Premiums</th>
+            <th class="px-4 py-3 text-right">Realized P/L</th>
             <th class="px-4 py-3 text-right">Actions</th>
           </tr>
         </thead>
@@ -142,9 +143,12 @@
             <td class="px-4 py-3 font-semibold">{{ p.symbol }}</td>
             <td class="px-4 py-3 text-right">{{ p.shares }}</td>
             <td class="px-4 py-3 text-right">${{ '%.2f'|format(p.purchase_price|float) }}</td>
+            <td class="px-4 py-3 text-right">${{ '%.2f'|format(p.close_price|float) if p.close_price else '—' }}</td>
             <td class="px-4 py-3 text-right text-gray-500">{{ p.open_date|fmt_date }}</td>
             <td class="px-4 py-3 text-right text-gray-500">{{ p.close_date|fmt_date }}</td>
-            <td class="px-4 py-3 text-right text-green-600">{{ p.net_premiums | currency }}</td>
+            <td class="px-4 py-3 text-right font-medium {% if p.realized_pl and p.realized_pl >= 0 %}text-green-600{% elif p.realized_pl %}text-red-600{% endif %}">
+              {{ p.realized_pl | currency }}
+            </td>
             <td class="px-4 py-3 text-right">
               <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100">
                 <a href="{{ url_for('trades.edit_position', pos_id=p.id) }}"

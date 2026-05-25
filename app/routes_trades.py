@@ -1,9 +1,39 @@
 import json
+import os
+import uuid
 from datetime import date, datetime
 from flask import (
     Blueprint, render_template, request, redirect,
     url_for, flash, current_app, session,
 )
+
+
+def _save_import(data: list) -> str:
+    """Write import rows to a /tmp file; return the unique ID."""
+    import_id = str(uuid.uuid4())
+    path = f'/tmp/owt_import_{import_id}.json'
+    with open(path, 'w') as f:
+        json.dump(data, f, default=str)
+    return import_id
+
+
+def _load_import(import_id: str) -> list | None:
+    if not import_id:
+        return None
+    path = f'/tmp/owt_import_{import_id}.json'
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _delete_import(import_id: str) -> None:
+    path = f'/tmp/owt_import_{import_id}.json'
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 from app.auth import login_required
 from app.db import get_db
 from app.services import market_data as md
@@ -364,8 +394,8 @@ def import_csv():
             flash(f'Error reading file: {e}', 'error')
             return redirect(request.url)
 
-        # Store in session for confirmation step
-        session['import_preview'] = json.dumps(valid_rows, default=str)
+        # Store in /tmp file (too large for session cookie)
+        session['import_id'] = _save_import(valid_rows)
         return render_template(
             'csv_preview.html',
             valid_rows=valid_rows,
@@ -378,16 +408,16 @@ def import_csv():
 @trades_bp.route('/import/csv/confirm', methods=['POST'])
 @login_required
 def import_csv_confirm():
-    raw = session.pop('import_preview', None)
-    if not raw:
+    import_id = session.pop('import_id', None)
+    rows = _load_import(import_id)
+    _delete_import(import_id)
+
+    if not rows:
         flash('Import session expired. Please upload again.', 'error')
         return redirect(url_for('trades.import_csv'))
 
-    rows = json.loads(raw)
-    # Only insert rows the user checked
     selected_indices = request.form.getlist('selected')
     selected_set = set(int(i) for i in selected_indices)
-
     to_insert = [row for i, row in enumerate(rows) if i in selected_set]
 
     if not to_insert:
@@ -395,7 +425,11 @@ def import_csv_confirm():
         return redirect(url_for('trades.import_csv'))
 
     db = get_db()
-    db.table('trades').insert(to_insert).execute()
+    # Insert in batches of 50 to avoid payload limits
+    batch_size = 50
+    for i in range(0, len(to_insert), batch_size):
+        db.table('trades').insert(to_insert[i:i + batch_size]).execute()
+
     flash(f'{len(to_insert)} trade(s) imported successfully.', 'success')
     return redirect(url_for('trades.index'))
 

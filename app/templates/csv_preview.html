@@ -15,21 +15,24 @@
   {% endif %}
 
   <form method="POST" action="{{ url_for('trades.import_csv_confirm') }}">
-    <div class="bg-white rounded-xl border border-gray-200">
+
+    {# ── Option Trades ── #}
+    <div class="bg-white rounded-xl border border-gray-200 mb-6">
       <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-        <h2 class="font-semibold text-gray-900">{{ valid_rows|length }} trades to import</h2>
+        <h2 class="font-semibold text-gray-900">{{ option_trades|length }} option trade(s) to import</h2>
         <div class="flex gap-2 text-sm">
-          <button type="button" onclick="toggleAll(true)" class="text-blue-600 hover:underline">Select all</button>
+          <button type="button" onclick="toggleGroup('trade', true)" class="text-blue-600 hover:underline">Select all</button>
           <span class="text-gray-300">|</span>
-          <button type="button" onclick="toggleAll(false)" class="text-gray-500 hover:underline">Deselect all</button>
+          <button type="button" onclick="toggleGroup('trade', false)" class="text-gray-500 hover:underline">Deselect all</button>
         </div>
       </div>
+      {% if option_trades %}
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
             <tr>
               <th class="px-4 py-3 text-left w-10">
-                <input type="checkbox" checked onchange="toggleAll(this.checked)" class="rounded" />
+                <input type="checkbox" checked onchange="toggleGroup('trade', this.checked)" class="rounded" />
               </th>
               <th class="px-4 py-3 text-left">Symbol</th>
               <th class="px-4 py-3 text-left">Type</th>
@@ -40,14 +43,13 @@
               <th class="px-4 py-3 text-right">Close Prem</th>
               <th class="px-4 py-3 text-right">Open Date</th>
               <th class="px-4 py-3 text-right">Status</th>
-              <th class="px-4 py-3 text-right">RH Code</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            {% for row in valid_rows %}{% set i = loop.index0 %}
+            {% for row in option_trades %}{% set i = loop.index0 %}
             <tr class="hover:bg-gray-50">
               <td class="px-4 py-3">
-                <input type="checkbox" name="selected" value="{{ i }}" checked class="rounded" />
+                <input type="checkbox" name="selected" value="t_{{ i }}" checked class="rounded trade-cb" />
               </td>
               <td class="px-4 py-3 font-semibold">{{ row.symbol }}</td>
               <td class="px-4 py-3">
@@ -72,31 +74,84 @@
                 <span class="px-1.5 py-0.5 rounded text-xs
                              {% if row.status == 'open' %}bg-blue-100 text-blue-700
                              {% elif row.status == 'expired' %}bg-gray-100 text-gray-600
+                             {% elif row.status == 'assigned' %}bg-red-100 text-red-700
                              {% else %}bg-green-100 text-green-700{% endif %}">
                   {{ row.status }}
                 </span>
               </td>
-              <td class="px-4 py-3 text-right text-xs text-gray-400">{{ row.rh_trans_code or '' }}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-      <div class="px-5 py-4 border-t border-gray-100 flex gap-3 justify-end">
-        <a href="{{ url_for('trades.import_csv') }}"
-           class="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-50">Cancel</a>
-        <button type="submit"
-                class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-          Import Selected
-        </button>
+      {% else %}
+      <p class="px-5 py-4 text-sm text-gray-400">No option trades found.</p>
+      {% endif %}
+    </div>
+
+    {# ── Stock Positions ── #}
+    <div class="bg-white rounded-xl border border-gray-200 mb-6">
+      <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h2 class="font-semibold text-gray-900">{{ positions|length }} stock position(s) to import</h2>
+        <div class="flex gap-2 text-sm">
+          <button type="button" onclick="toggleGroup('pos', true)" class="text-blue-600 hover:underline">Select all</button>
+          <span class="text-gray-300">|</span>
+          <button type="button" onclick="toggleGroup('pos', false)" class="text-gray-500 hover:underline">Deselect all</button>
+        </div>
       </div>
+      {% if positions %}
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+            <tr>
+              <th class="px-4 py-3 text-left w-10">
+                <input type="checkbox" checked onchange="toggleGroup('pos', this.checked)" class="rounded" />
+              </th>
+              <th class="px-4 py-3 text-left">Symbol</th>
+              <th class="px-4 py-3 text-right">Shares</th>
+              <th class="px-4 py-3 text-right">Purchase Price</th>
+              <th class="px-4 py-3 text-right">Open Date</th>
+              <th class="px-4 py-3 text-right">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-50">
+            {% for row in positions %}{% set i = loop.index0 %}
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-3">
+                <input type="checkbox" name="selected" value="p_{{ i }}" checked class="rounded pos-cb" />
+              </td>
+              <td class="px-4 py-3 font-semibold">{{ row.symbol }}</td>
+              <td class="px-4 py-3 text-right">{{ row.shares }}</td>
+              <td class="px-4 py-3 text-right">${{ '%.2f'|format(row.purchase_price|float) if row.purchase_price else '—' }}</td>
+              <td class="px-4 py-3 text-right text-gray-500">{{ row.open_date or '—' }}</td>
+              <td class="px-4 py-3 text-right">
+                <span class="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-700">{{ row.status }}</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="px-5 py-4 text-sm text-gray-400">No open stock positions after FIFO matching.</p>
+      {% endif %}
+    </div>
+
+    <div class="flex gap-3 justify-end">
+      <a href="{{ url_for('trades.import_csv') }}"
+         class="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-50">Cancel</a>
+      <button type="submit"
+              class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+        Import Selected
+      </button>
     </div>
   </form>
 </div>
 
 <script>
-function toggleAll(checked) {
-  document.querySelectorAll('input[name="selected"]').forEach(cb => cb.checked = checked);
+function toggleGroup(group, checked) {
+  const cls = group === 'trade' ? 'trade-cb' : 'pos-cb';
+  document.querySelectorAll('.' + cls).forEach(cb => cb.checked = checked);
 }
 </script>
 {% endblock %}

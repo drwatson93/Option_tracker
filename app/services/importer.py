@@ -1,5 +1,6 @@
 import re
 import io
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 import pandas as pd
@@ -23,7 +24,6 @@ def _parse_date(value) -> Optional[str]:
             return None
     except (TypeError, ValueError):
         pass
-    # pd.Timestamp or datetime (returned when Excel parsed without dtype=str)
     if isinstance(value, pd.Timestamp):
         return value.strftime('%Y-%m-%d')
     if isinstance(value, datetime):
@@ -39,229 +39,256 @@ def _parse_date(value) -> Optional[str]:
     return None
 
 
-def _parse_amount(value) -> float:
-    if pd.isna(value):
-        return 0.0
-    s = str(value).replace('$', '').replace(',', '').strip()
+def _parse_float(value) -> Optional[float]:
+    if value is None:
+        return None
     try:
-        return float(s)
-    except ValueError:
-        return 0.0
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(str(value).replace('$', '').replace(',', '').strip())
+    except (ValueError, TypeError):
+        return None
 
 
-def _parse_option_description(desc: str):
-    """Returns (symbol, expiration_date_str, option_type_raw, strike) or None."""
+def _parse_int(value, default=0) -> int:
+    f = _parse_float(value)
+    return int(f) if f is not None else default
+
+
+def _parse_option_description(desc: str) -> Optional[tuple]:
+    """Returns (symbol, exp_date_str, 'Call'/'Put', strike_float) or None."""
     m = OPTION_DESC_RE.search(str(desc))
     if not m:
         return None
     symbol = m.group(1).upper()
-    exp_raw = m.group(2)
-    opt_raw = m.group(3).capitalize()  # 'Call' or 'Put'
+    opt_raw = m.group(3).capitalize()
     strike = float(m.group(4))
     try:
-        exp_date = datetime.strptime(exp_raw, '%m/%d/%Y').strftime('%Y-%m-%d')
+        exp_date = datetime.strptime(m.group(2), '%m/%d/%Y').strftime('%Y-%m-%d')
     except ValueError:
-        exp_date = None
+        return None
     return symbol, exp_date, opt_raw, strike
 
 
-def _row_to_trade(row: pd.Series) -> Optional[dict]:
-    trans_code = str(row.get('Trans Code', '')).strip().upper()
-    instrument = str(row.get('Instrument', '')).strip().upper()
-    description = str(row.get('Description', '')).strip()
-    activity_date = _parse_date(row.get('Activity Date'))
-    quantity_raw = row.get('Quantity', 0)
-    price_raw = row.get('Price', 0)
-    amount_raw = row.get('Amount', 0)
+# ──────────────────────────────────────────────
+# Option grouping and merging
+# ──────────────────────────────────────────────
 
-    try:
-        quantity = int(float(str(quantity_raw).replace(',', ''))) if not pd.isna(quantity_raw) else 0
-    except (ValueError, TypeError):
-        quantity = 0
-
-    try:
-        price = float(str(price_raw).replace('$', '').replace(',', '')) if not pd.isna(price_raw) else 0.0
-    except (ValueError, TypeError):
-        price = 0.0
-
-    amount = _parse_amount(amount_raw)
-
-    # Skip rows we can't map
-    if trans_code not in ('STO', 'BTC', 'STC', 'OEXP', 'BUY', 'SELL', 'BTO'):
-        return None
-    if not instrument and trans_code not in ('BUY', 'SELL'):
-        return None
-
-    # --- Stock trades ---
-    if trans_code in ('BUY', 'SELL'):
-        # Skip if it looks like an option (description has Call/Put pattern)
-        if OPTION_DESC_RE.search(description):
-            return None
-        return {
-            'symbol': instrument or description.strip().upper(),
-            'option_type': 'Stock',
-            'strike': None,
-            'expiration_date': None,
-            'quantity': abs(quantity),
-            'open_premium': price if trans_code == 'BUY' else None,
-            'close_premium': price if trans_code == 'SELL' else None,
-            'fees': 0,
-            'open_date': activity_date,  # use activity_date for both BUY and SELL
-            'close_date': activity_date if trans_code == 'SELL' else None,
-            'status': 'open' if trans_code == 'BUY' else 'closed',
-            'import_source': 'csv_import',
-            'rh_trans_code': trans_code,
-            'notes': description,
-        }
-
-    # --- Option trades ---
-    parsed = _parse_option_description(description)
-    if not parsed:
-        return None
-
-    sym, exp_date, opt_raw, strike = parsed
-    symbol = instrument or sym
-
-    if trans_code == 'STO':
-        # Sell To Open: credit received (amount positive)
-        option_type = 'CC' if opt_raw == 'Call' else 'CSP'
-        premium = amount / (abs(quantity) * 100) if quantity else price
-        return {
-            'symbol': symbol,
-            'option_type': option_type,
-            'strike': strike,
-            'expiration_date': exp_date,
-            'quantity': abs(quantity),
-            'open_premium': abs(premium),
-            'close_premium': None,
-            'fees': 0,
-            'open_date': activity_date,
-            'close_date': None,
-            'status': 'open',
-            'import_source': 'csv_import',
-            'rh_trans_code': 'STO',
-            'notes': None,
-        }
-
-    if trans_code == 'BTC':
-        # Buy To Close: debit paid (amount negative)
-        option_type = 'CC' if opt_raw == 'Call' else 'CSP'
-        premium = abs(amount) / (abs(quantity) * 100) if quantity else price
-        return {
-            'symbol': symbol,
-            'option_type': option_type,
-            'strike': strike,
-            'expiration_date': exp_date,
-            'quantity': abs(quantity),
-            'open_premium': None,
-            'close_premium': abs(premium),
-            'fees': 0,
-            'open_date': activity_date,  # actual open date unknown; use activity_date as placeholder
-            'close_date': activity_date,
-            'status': 'closed',
-            'import_source': 'csv_import',
-            'rh_trans_code': 'BTC',
-            'notes': None,
-        }
-
-    if trans_code == 'BTO':
-        # Buy To Open long option
-        opt_type_map = {'Call': 'Call', 'Put': 'Put'}
-        premium = abs(amount) / (abs(quantity) * 100) if quantity else price
-        return {
-            'symbol': symbol,
-            'option_type': opt_type_map.get(opt_raw, opt_raw),
-            'strike': strike,
-            'expiration_date': exp_date,
-            'quantity': abs(quantity),
-            'open_premium': abs(premium),
-            'close_premium': None,
-            'fees': 0,
-            'open_date': activity_date,
-            'close_date': None,
-            'status': 'open',
-            'import_source': 'csv_import',
-            'rh_trans_code': 'BTO',
-            'notes': None,
-        }
-
-    if trans_code == 'STC':
-        opt_type_map = {'Call': 'Call', 'Put': 'Put'}
-        premium = abs(amount) / (abs(quantity) * 100) if quantity else price
-        return {
-            'symbol': symbol,
-            'option_type': opt_type_map.get(opt_raw, opt_raw),
-            'strike': strike,
-            'expiration_date': exp_date,
-            'quantity': abs(quantity),
-            'open_premium': None,
-            'close_premium': abs(premium),
-            'fees': 0,
-            'open_date': activity_date,
-            'close_date': activity_date,
-            'status': 'closed',
-            'import_source': 'csv_import',
-            'rh_trans_code': 'STC',
-            'notes': None,
-        }
-
-    if trans_code == 'OEXP':
-        opt_type_map = {'Call': 'CC', 'Put': 'CSP'}
-        return {
-            'symbol': symbol,
-            'option_type': opt_type_map.get(opt_raw, opt_raw),
-            'strike': strike,
-            'expiration_date': exp_date,
-            'quantity': abs(quantity),
-            'open_premium': None,
-            'close_premium': 0.0,
-            'fees': 0,
-            'open_date': activity_date,
-            'close_date': activity_date,
-            'status': 'expired',
-            'import_source': 'csv_import',
-            'rh_trans_code': 'OEXP',
-            'notes': None,
-        }
-
-    return None
+OPTION_OPEN_CODES = {'STO', 'BTO'}
+OPTION_CLOSE_CODES = {'BTC', 'STC', 'OEXP', 'OASGN'}
+OPTION_CODES = OPTION_OPEN_CODES | OPTION_CLOSE_CODES
 
 
-def parse_robinhood_file(file_bytes: bytes, filename: str) -> tuple[list[dict], list[dict]]:
+def _process_option_groups(option_rows: list) -> list:
     """
-    Returns (valid_rows, error_rows).
-    valid_rows: list of trade dicts ready for DB insert (after user confirmation).
-    error_rows: rows that couldn't be parsed, with a 'parse_error' key.
+    Groups option transactions by (symbol, strike, exp_date, Call/Put) and
+    merges each group into a single trade record with correct net P/L.
+    """
+    groups: dict = defaultdict(lambda: {'opens': [], 'closes': [], 'meta': None})
+
+    for row in option_rows:
+        parsed = _parse_option_description(row['description'])
+        if not parsed:
+            continue
+        sym, exp_date, opt_raw, strike = parsed
+        key = (sym, round(strike, 2), exp_date, opt_raw)
+        g = groups[key]
+        g['meta'] = {'symbol': sym, 'strike': strike, 'exp': exp_date, 'opt_raw': opt_raw}
+
+        tc = row['trans_code']
+        if tc in OPTION_OPEN_CODES:
+            g['opens'].append(row)
+        else:
+            g['closes'].append(row)
+
+    trades = []
+    for key, g in groups.items():
+        if g['meta'] is None:
+            continue
+        meta = g['meta']
+        opens = g['opens']
+        closes = g['closes']
+
+        # Determine option type (CC/CSP for short, Call/Put for long)
+        is_short = any(r['trans_code'] == 'STO' for r in opens) or (
+            not opens and any(r['trans_code'] in ('BTC', 'OEXP', 'OASGN') for r in closes)
+        )
+        if is_short:
+            opt_type = 'CC' if meta['opt_raw'] == 'Call' else 'CSP'
+        else:
+            opt_type = meta['opt_raw']  # 'Call' or 'Put'
+
+        # Total open quantity (use closes qty if no opens found)
+        total_open_qty = sum(_parse_int(r['quantity']) for r in opens)
+        if total_open_qty == 0:
+            total_open_qty = sum(_parse_int(r['quantity']) for r in closes
+                                 if r['trans_code'] not in ('OEXP', 'OASGN'))
+        if total_open_qty == 0:
+            total_open_qty = 1
+
+        # Dollar amounts (all stored as signed floats — STO positive, BTC negative)
+        open_total_dollars = sum(
+            abs(r['amount']) for r in opens
+            if r['amount'] is not None and not (isinstance(r['amount'], float) and pd.isna(r['amount']))
+        )
+        close_total_dollars = sum(
+            abs(r['amount']) for r in closes
+            if r['amount'] is not None and not (isinstance(r['amount'], float) and pd.isna(r['amount']))
+        )
+
+        open_prem = open_total_dollars / (total_open_qty * 100) if open_total_dollars else None
+        close_prem = close_total_dollars / (total_open_qty * 100) if close_total_dollars else None
+
+        # Dates
+        open_dates = [r['activity_date'] for r in opens if r['activity_date']]
+        close_dates = [r['activity_date'] for r in closes if r['activity_date']]
+        open_date = min(open_dates) if open_dates else (min(close_dates) if close_dates else None)
+        close_date = max(close_dates) if close_dates else None
+
+        # Status
+        if not closes:
+            status = 'open'
+            close_prem = None
+            close_date = None
+        elif any(r['trans_code'] == 'OASGN' for r in closes):
+            status = 'assigned'
+        elif any(r['trans_code'] == 'OEXP' for r in closes):
+            status = 'expired'
+        else:
+            status = 'closed'
+
+        trades.append({
+            'symbol': meta['symbol'],
+            'option_type': opt_type,
+            'strike': meta['strike'],
+            'expiration_date': meta['exp'],
+            'quantity': total_open_qty,
+            'open_premium': round(open_prem, 4) if open_prem else None,
+            'close_premium': round(close_prem, 4) if close_prem else None,
+            'fees': 0,
+            'open_date': open_date,
+            'close_date': close_date,
+            'status': status,
+            'import_source': 'csv_import',
+            'rh_trans_code': 'STO' if is_short else 'BTO',
+            'notes': None,
+        })
+
+    return trades
+
+
+# ──────────────────────────────────────────────
+# Stock FIFO matching
+# ──────────────────────────────────────────────
+
+def _process_stocks(stock_rows: list) -> list:
+    """
+    FIFO matching of Buy lots against Sell transactions.
+    Returns only open position records (shares still held).
+    """
+    sorted_rows = sorted(stock_rows, key=lambda r: r['activity_date'] or '0000-01-01')
+
+    inventory: dict = defaultdict(list)  # symbol -> [{qty, price, date}]
+
+    for row in sorted_rows:
+        sym = row['symbol']
+        qty = _parse_int(row['quantity'])
+        price = row['price'] or 0.0
+        date = row['activity_date']
+        tc = row['trans_code'].upper()
+
+        if tc == 'BUY':
+            inventory[sym].append({'qty': qty, 'price': price, 'date': date})
+        elif tc == 'SELL':
+            remaining = qty
+            while remaining > 0 and inventory[sym]:
+                lot = inventory[sym][0]
+                if lot['qty'] <= remaining:
+                    remaining -= lot['qty']
+                    inventory[sym].pop(0)
+                else:
+                    lot['qty'] -= remaining
+                    remaining = 0
+
+    positions = []
+    for sym, lots in inventory.items():
+        for lot in lots:
+            if lot['qty'] > 0:
+                positions.append({
+                    'symbol': sym,
+                    'shares': lot['qty'],
+                    'purchase_price': lot['price'],
+                    'open_date': lot['date'],
+                    'close_date': None,
+                    'status': 'open',
+                    'notes': None,
+                })
+    return positions
+
+
+# ──────────────────────────────────────────────
+# Main entry point
+# ──────────────────────────────────────────────
+
+def parse_robinhood_file(file_bytes: bytes, filename: str) -> tuple[list, list, list]:
+    """
+    Returns (option_trades, positions, error_rows).
+    option_trades: merged option records (STO+BTC pairs → single trade with net P/L)
+    positions: open stock lots (FIFO-matched BUY - SELL)
+    error_rows: rows that could not be parsed
     """
     ext = filename.rsplit('.', 1)[-1].lower()
     buf = io.BytesIO(file_bytes)
 
     if ext in ('xlsx', 'xls'):
-        # Don't force dtype=str — let pandas parse date columns as Timestamps
         df = pd.read_excel(buf)
     else:
         df = pd.read_csv(buf, dtype=str)
 
-    # Normalize column names (strip whitespace)
     df.columns = [c.strip() for c in df.columns]
 
-    # Check for required columns
     missing = ROBINHOOD_COLUMNS - set(df.columns)
     if len(missing) > 3:
         raise ValueError(
             f"File doesn't look like a Robinhood export. Missing columns: {missing}"
         )
 
-    valid_rows = []
+    option_rows = []
+    stock_rows = []
     error_rows = []
 
-    for idx, row in df.iterrows():
+    for _, row in df.iterrows():
+        tc = str(row.get('Trans Code', '')).strip().upper()
+        desc = str(row.get('Description', '')).strip()
+        instrument = str(row.get('Instrument', '')).strip().upper()
+
         try:
-            trade = _row_to_trade(row)
-            if trade is None:
-                continue  # silently skip unrecognized rows (dividends, interest, etc.)
-            valid_rows.append(trade)
+            base = {
+                'trans_code': tc,
+                'symbol': instrument,
+                'description': desc,
+                'activity_date': _parse_date(row.get('Activity Date')),
+                'quantity': _parse_int(row.get('Quantity'), default=1),
+                'price': _parse_float(row.get('Price')),
+                'amount': _parse_float(row.get('Amount')),
+            }
+
+            if tc in OPTION_CODES:
+                option_rows.append(base)
+            elif tc in ('BUY', 'SELL'):
+                # Skip if description looks like an option
+                if OPTION_DESC_RE.search(desc):
+                    continue
+                stock_rows.append(base)
+            # else: dividend, interest, journal, etc. — silently skip
+
         except Exception as e:
             error_rows.append({**row.to_dict(), 'parse_error': str(e)})
 
-    return valid_rows, error_rows
+    option_trades = _process_option_groups(option_rows)
+    positions = _process_stocks(stock_rows)
+
+    return option_trades, positions, error_rows

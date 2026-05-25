@@ -17,7 +17,7 @@ def _save_import(data: list) -> str:
     return import_id
 
 
-def _load_import(import_id: str) -> list | None:
+def _load_import(import_id: str) -> dict | None:
     if not import_id:
         return None
     path = f'/tmp/owt_import_{import_id}.json'
@@ -386,7 +386,7 @@ def import_csv():
 
         try:
             file_bytes = f.read()
-            valid_rows, error_rows = parse_robinhood_file(file_bytes, f.filename)
+            option_trades, positions, error_rows = parse_robinhood_file(file_bytes, f.filename)
         except ValueError as e:
             flash(str(e), 'error')
             return redirect(request.url)
@@ -395,10 +395,11 @@ def import_csv():
             return redirect(request.url)
 
         # Store in /tmp file (too large for session cookie)
-        session['import_id'] = _save_import(valid_rows)
+        session['import_id'] = _save_import({'option_trades': option_trades, 'positions': positions})
         return render_template(
             'csv_preview.html',
-            valid_rows=valid_rows,
+            option_trades=option_trades,
+            positions=positions,
             error_rows=error_rows,
         )
 
@@ -409,28 +410,39 @@ def import_csv():
 @login_required
 def import_csv_confirm():
     import_id = session.pop('import_id', None)
-    rows = _load_import(import_id)
+    data = _load_import(import_id)
     _delete_import(import_id)
 
-    if not rows:
+    if not data:
         flash('Import session expired. Please upload again.', 'error')
         return redirect(url_for('trades.import_csv'))
 
-    selected_indices = request.form.getlist('selected')
-    selected_set = set(int(i) for i in selected_indices)
-    to_insert = [row for i, row in enumerate(rows) if i in selected_set]
+    option_trades = data.get('option_trades', [])
+    positions = data.get('positions', [])
 
-    if not to_insert:
+    # Parse prefixed selection values: 't_N' for trades, 'p_N' for positions
+    selected = request.form.getlist('selected')
+    trade_indices = {int(s[2:]) for s in selected if s.startswith('t_')}
+    pos_indices = {int(s[2:]) for s in selected if s.startswith('p_')}
+
+    trades_to_insert = [t for i, t in enumerate(option_trades) if i in trade_indices]
+    positions_to_insert = [p for i, p in enumerate(positions) if i in pos_indices]
+
+    if not trades_to_insert and not positions_to_insert:
         flash('No rows selected.', 'error')
         return redirect(url_for('trades.import_csv'))
 
     db = get_db()
-    # Insert in batches of 50 to avoid payload limits
     batch_size = 50
-    for i in range(0, len(to_insert), batch_size):
-        db.table('trades').insert(to_insert[i:i + batch_size]).execute()
 
-    flash(f'{len(to_insert)} trade(s) imported successfully.', 'success')
+    for i in range(0, len(trades_to_insert), batch_size):
+        db.table('trades').insert(trades_to_insert[i:i + batch_size]).execute()
+
+    for i in range(0, len(positions_to_insert), batch_size):
+        db.table('positions').insert(positions_to_insert[i:i + batch_size]).execute()
+
+    total = len(trades_to_insert) + len(positions_to_insert)
+    flash(f'Imported {len(trades_to_insert)} trade(s) and {len(positions_to_insert)} position(s).', 'success')
     return redirect(url_for('trades.index'))
 
 

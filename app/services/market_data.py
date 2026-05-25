@@ -1,7 +1,7 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import requests
@@ -119,14 +119,19 @@ def get_price_history(symbol: str, period: str = '1y') -> list[dict]:
 
 
 def get_benchmark_returns(portfolio_start: Optional[str]) -> dict:
-    """Returns % return for SPY and QQQ since portfolio_start (YYYY-MM-DD)."""
+    """Returns % return for SPY and QQQ since portfolio_start (YYYY-MM-DD).
+    Caps lookback at 365 days — Finnhub free tier limit for daily candles."""
     key = _api_key()
     if not key or not portfolio_start:
         return {}
     try:
-        start_ts = int(datetime.strptime(portfolio_start[:10], '%Y-%m-%d').timestamp())
+        requested = datetime.strptime(portfolio_start[:10], '%Y-%m-%d')
+        one_year_ago = datetime.utcnow() - timedelta(days=364)
+        # Use the more recent of the two dates to stay within free tier
+        effective_start = max(requested, one_year_ago)
+        start_ts = int(effective_start.timestamp())
         end_ts = int(time.time())
-        result = {}
+        result = {'start_used': effective_start.strftime('%Y-%m-%d')}
         for sym in ('SPY', 'QQQ'):
             r = _session.get(
                 f'{_FINNHUB_BASE}/stock/candle',
@@ -135,13 +140,15 @@ def get_benchmark_returns(portfolio_start: Optional[str]) -> dict:
             )
             r.raise_for_status()
             data = r.json()
+            if data.get('s') != 'ok':
+                continue
             closes = data.get('c', [])
             if len(closes) >= 2:
                 first, last = float(closes[0]), float(closes[-1])
                 result[sym] = round((last - first) / first * 100, 2) if first else 0.0
         return result
-    except Exception:
-        return {}
+    except Exception as exc:
+        return {'error': str(exc)[:200]}
 
 
 def invalidate(symbol: str) -> None:

@@ -391,6 +391,28 @@ def ticker_detail(symbol: str):
     profitable = len([t for t in closed_trades if (t.get('net_premium_total') or 0) > 0])
     win_pct = (profitable / closed_count * 100) if closed_count else None
 
+    # Aggregate all open position lots into a single summary card
+    open_pos_list = [p for p in enriched_positions if p.get('status') == 'open']
+    open_position_summary = None
+    if open_pos_list:
+        total_shares_agg = sum(int(p.get('shares') or 0) for p in open_pos_list)
+        total_cost = sum(
+            float(p.get('purchase_price') or 0) * int(p.get('shares') or 0)
+            for p in open_pos_list
+        )
+        avg_price_agg = total_cost / total_shares_agg if total_shares_agg else 0
+        total_open_pl = sum(p.get('open_pl') or 0 for p in open_pos_list)
+        total_net_premiums_pos = sum(p.get('net_premiums') or 0 for p in open_pos_list)
+        total_net_open_pl = sum(p.get('net_open_pl') or 0 for p in open_pos_list)
+        open_position_summary = {
+            'shares': total_shares_agg,
+            'avg_purchase_price': avg_price_agg,
+            'open_pl': total_open_pl if current_price else None,
+            'net_premiums': total_net_premiums_pos,
+            'net_open_pl': total_net_open_pl if current_price else None,
+            'lot_count': len(open_pos_list),
+        }
+
     return render_template(
         'ticker_detail.html',
         symbol=symbol,
@@ -399,6 +421,7 @@ def ticker_detail(symbol: str):
         open_trades=open_trades,
         closed_trades=closed_trades,
         positions=enriched_positions,
+        open_position_summary=open_position_summary,
         net_premiums_total=net_premiums_total,
         open_pl=open_pl,
         net_pl=net_pl,

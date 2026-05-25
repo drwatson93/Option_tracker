@@ -5,11 +5,12 @@
 <div class="space-y-6">
   <h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
 
-  <!-- KPI Cards -->
+  <!-- Row 1: Main KPIs -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Open Trades</p>
       <p class="text-3xl font-bold text-gray-900 mt-1">{{ stats.open_trades_count }}</p>
+      <p class="text-xs text-gray-400 mt-1">{{ stats.avg_dte | round(0) | int }}d avg DTE</p>
     </div>
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">% ITM</p>
@@ -17,19 +18,27 @@
         {{ '%.1f'|format(stats.itm_pct) }}%
         <span class="text-lg text-gray-400 font-normal">[{{ stats.itm_count }}/{{ stats.open_trades_count }}]</span>
       </p>
+      <p class="text-xs text-gray-400 mt-1">in-the-money open trades</p>
     </div>
     <div class="bg-white rounded-xl border border-gray-200 p-4">
-      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Open Net Premium</p>
-      <p class="text-3xl font-bold text-green-600 mt-1">${{ '{:,.0f}'.format(stats.open_trades_net_premium) }}</p>
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Premium Collected</p>
+      <p class="text-3xl font-bold text-green-600 mt-1">{{ premium_collected | currency }}</p>
+      <p class="text-xs text-gray-400 mt-1">all-time net (open + closed)</p>
     </div>
     <div class="bg-white rounded-xl border border-gray-200 p-4">
-      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Avg Annualized Yield</p>
-      <p class="text-3xl font-bold text-green-600 mt-1">{{ '%.1f'|format(display_ann_yield) }}%</p>
-      <p class="text-xs text-gray-400 mt-1">{{ yield_label }}</p>
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Net P/L</p>
+      <p class="text-3xl font-bold mt-1 {% if total_net_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+        {{ total_net_pl | currency }}
+      </p>
+      {% if stats.total_capital > 0 %}
+      <p class="text-xs mt-1 {% if return_pct >= 0 %}text-green-500{% else %}text-red-500{% endif %}">
+        {{ '%+.1f'|format(return_pct) }}% on deployed capital
+      </p>
+      {% endif %}
     </div>
   </div>
 
-  <!-- Capital Row -->
+  <!-- Row 2: Capital + Yield -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Open Trades Capital</p>
@@ -42,19 +51,191 @@
       <p class="text-xs text-gray-400 mt-1">Trades: ${{ '{:,.0f}'.format(stats.open_trades_capital) }} | Positions: ${{ '{:,.0f}'.format(stats.positions_capital) }}</p>
     </div>
     <div class="bg-white rounded-xl border border-gray-200 p-4">
-      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Closed Net Premium</p>
-      <p class="text-2xl font-bold mt-1 {% if closed_net_premium >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-        {{ closed_net_premium | currency }}
-      </p>
-      <p class="text-xs text-gray-400 mt-1">all-time collected</p>
+      <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Avg Ann. Yield</p>
+      <p class="text-2xl font-bold text-green-600 mt-1">{{ '%.1f'|format(display_ann_yield) }}%</p>
+      <p class="text-xs text-gray-400 mt-1">{{ yield_label }}</p>
     </div>
     <div class="bg-white rounded-xl border border-gray-200 p-4">
       <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">YTD Closed P/L</p>
       <p class="text-2xl font-bold mt-1 {% if ytd_pl >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
         {{ ytd_pl | currency }}
       </p>
+      <p class="text-xs text-gray-400 mt-1">{{ today[:4] }} realized</p>
     </div>
   </div>
+
+  <!-- Benchmark Comparison (async via Alpine.js) -->
+  {% if portfolio_start %}
+  <div class="bg-white rounded-xl border border-gray-200 p-5"
+       x-data="{ bm: null, loading: true, err: false }"
+       x-init="fetch('/api/benchmark?start={{ portfolio_start }}')
+                  .then(r => r.json())
+                  .then(d => { bm = d; loading = false; })
+                  .catch(() => { err = true; loading = false; })">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-gray-900">Benchmark Comparison</h2>
+      <span class="text-xs text-gray-400">since {{ portfolio_start }}</span>
+    </div>
+    <div class="grid grid-cols-3 gap-4 text-center">
+      <!-- Portfolio -->
+      <div>
+        <p class="text-xs text-gray-500 uppercase font-medium mb-1">Portfolio</p>
+        <p class="text-2xl font-bold {% if return_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+          {{ '%+.1f'|format(return_pct) }}%
+        </p>
+        <p class="text-xs text-gray-400 mt-0.5">net P/L / capital</p>
+      </div>
+      <!-- SPY -->
+      <div>
+        <p class="text-xs text-gray-500 uppercase font-medium mb-1">S&P 500 (SPY)</p>
+        <template x-if="loading"><p class="text-2xl font-bold text-gray-300">...</p></template>
+        <template x-if="!loading && !err && bm && bm.SPY !== undefined">
+          <p class="text-2xl font-bold" :class="bm.SPY >= 0 ? 'text-green-600' : 'text-red-600'"
+             x-text="(bm.SPY >= 0 ? '+' : '') + bm.SPY.toFixed(1) + '%'"></p>
+        </template>
+        <template x-if="!loading && (err || !bm || bm.SPY === undefined)">
+          <p class="text-2xl font-bold text-gray-300">N/A</p>
+        </template>
+        <p class="text-xs text-gray-400 mt-0.5">buy &amp; hold</p>
+      </div>
+      <!-- QQQ -->
+      <div>
+        <p class="text-xs text-gray-500 uppercase font-medium mb-1">Nasdaq (QQQ)</p>
+        <template x-if="loading"><p class="text-2xl font-bold text-gray-300">...</p></template>
+        <template x-if="!loading && !err && bm && bm.QQQ !== undefined">
+          <p class="text-2xl font-bold" :class="bm.QQQ >= 0 ? 'text-green-600' : 'text-red-600'"
+             x-text="(bm.QQQ >= 0 ? '+' : '') + bm.QQQ.toFixed(1) + '%'"></p>
+        </template>
+        <template x-if="!loading && (err || !bm || bm.QQQ === undefined)">
+          <p class="text-2xl font-bold text-gray-300">N/A</p>
+        </template>
+        <p class="text-xs text-gray-400 mt-0.5">buy &amp; hold</p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Monthly Earnings -->
+  {% if monthly_earnings %}
+  <div class="bg-white rounded-xl border border-gray-200 p-5">
+    <h2 class="font-semibold text-gray-900 mb-4">Monthly Earnings (last 6 months)</h2>
+    <div class="flex items-end gap-2" style="height: 120px;">
+      {% for m in monthly_earnings %}
+      {% set bar_h = [((m['earnings'] | abs) / monthly_max * 80) | int, 3] | max %}
+      <div class="flex-1 flex flex-col items-center justify-end gap-1 h-full min-w-0">
+        <p class="text-xs font-semibold truncate w-full text-center
+                  {% if m['earnings'] >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+          {% if m['earnings'] != 0 %}${{ '{:,.0f}'.format(m['earnings'] | abs) }}{% else %}—{% endif %}
+        </p>
+        <div class="w-full rounded-t-sm"
+             style="height: {{ bar_h }}px; background-color: {{ '#16a34a' if m['earnings'] >= 0 else '#dc2626' }};"></div>
+        <p class="text-xs text-gray-400 truncate w-full text-center">{{ m['label'].split(' ')[0] }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Leaders & Laggards grid -->
+  {% if leaders_by_premium or leaders_by_pl %}
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+    <!-- Leaders by Premium -->
+    {% if leaders_by_premium %}
+    <div class="bg-white rounded-xl border border-gray-200">
+      <div class="px-5 py-4 border-b border-gray-100">
+        <h2 class="font-semibold text-gray-900">Leaders by Premium</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+            <tr>
+              <th class="px-4 py-2 text-left">Symbol</th>
+              <th class="px-4 py-2 text-right">Trades</th>
+              <th class="px-4 py-2 text-right">Contracts</th>
+              <th class="px-4 py-2 text-right">Avg DTE</th>
+              <th class="px-4 py-2 text-right">Ann ROC</th>
+              <th class="px-4 py-2 text-right">Net Premium</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-50">
+            {% for s in leaders_by_premium %}
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-2 font-semibold">
+                <a href="{{ url_for('views.ticker_detail', symbol=s['symbol']) }}" class="text-blue-600 hover:underline">{{ s['symbol'] }}</a>
+              </td>
+              <td class="px-4 py-2 text-right text-gray-600">{{ s['trade_count'] }}</td>
+              <td class="px-4 py-2 text-right text-gray-600">{{ s['contracts'] }}</td>
+              <td class="px-4 py-2 text-right text-gray-600">{{ s['avg_dte'] | round(0) | int }}d</td>
+              <td class="px-4 py-2 text-right {% if s['avg_ann_yield'] > 0 %}text-green-600{% endif %}">
+                {{ '%.1f'|format(s['avg_ann_yield']) }}%
+              </td>
+              <td class="px-4 py-2 text-right font-semibold {% if s['net_premium'] >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                {{ s['net_premium'] | currency }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Leaders & Laggards by P/L -->
+    <div class="bg-white rounded-xl border border-gray-200">
+      <div class="px-5 py-4 border-b border-gray-100">
+        <h2 class="font-semibold text-gray-900">Leaders &amp; Laggards by P/L</h2>
+      </div>
+      <div class="grid grid-cols-2 divide-x divide-gray-100">
+        <!-- Leaders -->
+        <div>
+          <div class="px-4 py-2 bg-green-50 border-b border-gray-100">
+            <span class="text-xs font-semibold text-green-700 uppercase">Top</span>
+          </div>
+          <table class="w-full text-sm">
+            <tbody class="divide-y divide-gray-50">
+              {% for s in leaders_by_pl %}
+              <tr class="hover:bg-gray-50">
+                <td class="px-4 py-2 font-semibold">
+                  <a href="{{ url_for('views.ticker_detail', symbol=s['symbol']) }}" class="text-blue-600 hover:underline">{{ s['symbol'] }}</a>
+                </td>
+                <td class="px-4 py-2 text-right font-medium {% if s['net_pl'] >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                  {{ s['net_pl'] | currency }}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td class="px-4 py-3 text-gray-400 text-xs" colspan="2">No data</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <!-- Laggards -->
+        <div>
+          <div class="px-4 py-2 bg-red-50 border-b border-gray-100">
+            <span class="text-xs font-semibold text-red-700 uppercase">Bottom</span>
+          </div>
+          <table class="w-full text-sm">
+            <tbody class="divide-y divide-gray-50">
+              {% for s in laggards_by_pl %}
+              <tr class="hover:bg-gray-50">
+                <td class="px-4 py-2 font-semibold">
+                  <a href="{{ url_for('views.ticker_detail', symbol=s['symbol']) }}" class="text-blue-600 hover:underline">{{ s['symbol'] }}</a>
+                </td>
+                <td class="px-4 py-2 text-right font-medium {% if s['net_pl'] >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                  {{ s['net_pl'] | currency }}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td class="px-4 py-3 text-gray-400 text-xs" colspan="2">No data</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  {% endif %}
 
   <!-- Upcoming Expirations -->
   {% if upcoming_expirations %}

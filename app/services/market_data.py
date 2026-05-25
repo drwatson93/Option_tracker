@@ -1,9 +1,31 @@
 import time
-import yfinance as yf
+from datetime import date, timedelta
 from typing import Optional
+
+import requests
+import yfinance as yf
 
 _cache: dict[str, dict] = {}
 CACHE_TTL = 300  # seconds
+
+
+class _TimeoutSession(requests.Session):
+    def __init__(self):
+        super().__init__()
+        self.headers.update({
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/120.0.0.0 Safari/537.36'
+            )
+        })
+
+    def request(self, *args, **kwargs):
+        kwargs.setdefault('timeout', 8)
+        return super().request(*args, **kwargs)
+
+
+_yf_session = _TimeoutSession()
 
 
 def get_price(symbol: str) -> dict:
@@ -13,7 +35,7 @@ def get_price(symbol: str) -> dict:
         return cached
 
     try:
-        hist = yf.Ticker(symbol).history(period='5d', auto_adjust=True)
+        hist = yf.Ticker(symbol, session=_yf_session).history(period='5d', auto_adjust=True)
         prices = hist['Close'].dropna()
         if prices.empty:
             raise ValueError('no price data returned')
@@ -27,9 +49,11 @@ def get_price(symbol: str) -> dict:
     except Exception as exc:
         if cached:
             return cached
-        result = {'symbol': symbol, 'price': 0.0, 'prev_close': 0.0,
-                  'change_pct': 0.0, 'ts': time.time(), 'error': True,
-                  'error_msg': str(exc)}
+        result = {
+            'symbol': symbol, 'price': 0.0, 'prev_close': 0.0,
+            'change_pct': 0.0, 'ts': time.time(), 'error': True,
+            'error_msg': str(exc)[:200],
+        }
     _cache[symbol] = result
     return result
 
@@ -42,7 +66,7 @@ def get_prices_bulk(symbols: list[str]) -> dict[str, dict]:
 
     for sym in stale:
         try:
-            hist = yf.Ticker(sym).history(period='5d', auto_adjust=True)
+            hist = yf.Ticker(sym, session=_yf_session).history(period='5d', auto_adjust=True)
             prices = hist['Close'].dropna()
             if prices.empty:
                 raise ValueError('no price data')
@@ -54,9 +78,11 @@ def get_prices_bulk(symbols: list[str]) -> dict[str, dict]:
                 'change_pct': change_pct, 'ts': now, 'error': False,
             }
         except Exception as exc:
-            result = {'symbol': sym, 'price': 0.0, 'prev_close': 0.0,
-                      'change_pct': 0.0, 'ts': now, 'error': True,
-                      'error_msg': str(exc)}
+            result = {
+                'symbol': sym, 'price': 0.0, 'prev_close': 0.0,
+                'change_pct': 0.0, 'ts': now, 'error': True,
+                'error_msg': str(exc)[:200],
+            }
         _cache[sym] = result
         fresh[sym] = result
 
@@ -66,7 +92,7 @@ def get_prices_bulk(symbols: list[str]) -> dict[str, dict]:
 def get_price_history(symbol: str, period: str = '1y') -> list[dict]:
     """Returns OHLCV list suitable for TradingView Lightweight Charts."""
     try:
-        hist = yf.Ticker(symbol.upper()).history(period=period, auto_adjust=True)
+        hist = yf.Ticker(symbol.upper(), session=_yf_session).history(period=period, auto_adjust=True)
         result = []
         for ts, row in hist.iterrows():
             result.append({
@@ -79,6 +105,28 @@ def get_price_history(symbol: str, period: str = '1y') -> list[dict]:
         return result
     except Exception:
         return []
+
+
+def get_benchmark_returns(portfolio_start: Optional[str]) -> dict:
+    """Returns % return for SPY and QQQ since portfolio_start date (YYYY-MM-DD)."""
+    if not portfolio_start:
+        return {}
+    try:
+        start = portfolio_start[:10]
+        end = (date.today() + timedelta(days=1)).isoformat()
+        result = {}
+        for sym in ('SPY', 'QQQ'):
+            hist = yf.Ticker(sym, session=_yf_session).history(
+                start=start, end=end, auto_adjust=True
+            )
+            prices = hist['Close'].dropna()
+            if len(prices) >= 2:
+                first = float(prices.iloc[0])
+                last = float(prices.iloc[-1])
+                result[sym] = round((last - first) / first * 100, 2) if first else 0.0
+        return result
+    except Exception:
+        return {}
 
 
 def invalidate(symbol: str) -> None:
